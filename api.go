@@ -12,13 +12,15 @@ import (
 )
 const (
 	defaultAPIAddr = "127.0.0.1:7432"
-	hookBinaryPath = "/home/ebpf/.local/bin/agentguard-hook"
 )
 
 var (
-	apiStartedAt  time.Time
+	apiStartedAt   time.Time
 	apiTrackedPids *ebpf.Map
-	apiProxyAddr  string
+	apiProxyAddr   string
+	// hookBinaryPath is the Claude hook command string (e.g. "/path/to/agentguard hook").
+	// Set in runEnforcer; empty until then.
+	hookBinaryPath string
 )
 
 type apiResponse struct {
@@ -226,15 +228,19 @@ func handleFeedbackStatus(w http.ResponseWriter, r *http.Request){
 	if b, err := os.ReadFile(activeSessionPath); err == nil {
 		session = strings.TrimSpace(string(b))
 	}
-	st, err := os.Stat(hookBinaryPath)
-	hookOK := err == nil && st.Size() > 0 && st.Size() < 8*1024*1024 // enforcer is ~14MB
+	hookOK := false
+	if self, err := os.Executable(); err == nil {
+		if st, err := os.Stat(self); err == nil && !st.IsDir() && st.Size() > 0 {
+			hookOK = true
+		}
+	}
 
 	last, _ := lastBlockedEvent()
 	writeOK(w, map[string]interface{}{
-		"hook_path":    			hookBinaryPath,
-		"hook_ok":    		  		hookOK,
-		"active_session": 			session,
+		"hook_path":                hookBinaryPath,
+		"hook_ok":                  hookOK,
+		"active_session":           session,
 		"pending_violation_files":  pending,
-		"last_blocked": 			last,
+		"last_blocked":             last,
 	})
 }

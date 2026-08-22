@@ -77,45 +77,6 @@ func quietAgentGuardLogs() {
 	log.Printf("=== TTY quiet mode (logs file-only) ===")
 }
 
-// parseAgentGuardArgs strips global flags from os.Args and returns a slice
-// shaped like os.Args (argv[0] = program name) for launch/attach parsing.
-//
-// Supported globals:
-//
-//	--verbose / -v
-//	--policy PATH
-//	--policy=PATH
-func parseAgentGuardArgs() []string {
-	out := make([]string, 0, len(os.Args))
-	out = append(out, os.Args[0])
-
-	args := os.Args[1:]
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "--verbose" || a == "-v":
-			verbose = true
-
-		case a == "--policy":
-			if i+1 >= len(args) {
-				log.Fatal("--policy requires a file path")
-			}
-			policyFlag = args[i+1]
-			i++
-
-		case strings.HasPrefix(a, "--policy="):
-			policyFlag = strings.TrimPrefix(a, "--policy=")
-			if policyFlag == "" {
-				log.Fatal("--policy requires a file path")
-			}
-
-		default:
-			out = append(out, a)
-		}
-	}
-	return out
-}
-
 type NamedPattern struct {
 	Pattern		string
 	PolicyID	uint32
@@ -557,13 +518,30 @@ func applyCommandPatterns(m *ebpf.Map, patterns []NamedPattern) error {
 
 func main() {
 	args := parseAgentGuardArgs()
+	if len(args) < 2 {
+		printUsage()
+		os.Exit(2)
+	}
+	if dispatchCLI(args) {
+		return
+	}
+	runEnforcer(args)
+}
 
+// runEnforcer is the heavy path: load BPF, apply policies, launch or attach.
+func runEnforcer(args []string) {
 	logFile, err := initAgentGuardLog()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "AgentGuard: failed to init log file: %v\n", err)
 		os.Exit(1)
 	}
 	defer logFile.Close()
+
+	if self, err := os.Executable(); err == nil {
+		hookBinaryPath = self + " hook"
+	} else {
+		hookBinaryPath = "agentguard hook"
+	}
 
 	// --- INITIALIZE TIME ANCHOR & DATABASE
 	initTimeAnchor()
@@ -724,7 +702,8 @@ func main() {
 		log.Printf("tracking existing pid %d", targetPID)
 	
 	default:
-		log.Fatal("Usage:\n  sudo ./agentguard [--verbose|-v] -- <agent> [args...]\n  sudo ./agentguard [--verbose|-v] <pid>")
+		printUsage()
+		os.Exit(2)
 	}
 	
 	if err := objs.TrackedPids.Update(uint32(targetPID), uint8(1), 0); err != nil {
