@@ -1,0 +1,52 @@
+policies:
+  credential_protection:
+    description: "Prevents the agent from reading sensitive files, API keys, and private SSH keys."
+    block_on:
+      syscall: "openat"
+      path_patterns:
+        - ".env"
+        - ".aws/credentials"
+        - "id_rsa"
+        - ".kube/config"
+    feedback: "SYSTEM FEEDBACK: You cannot read credential files. You are not authorized to access production secrets."
+
+  exfiltration_prevention:
+    description: "Stops the agent from sending data to unauthorized external IP addresses or domains."
+    block_on:
+      syscall: "connect"
+      allowed_hosts:
+        # --- Required for Claude Code ↔ Anthropic ---
+        - "api.anthropic.com"          # API, feature flags, telemetry, WebFetch safety check
+        - "claude.ai"                  # claude.ai account auth
+        - "claude.com"                 # sign-in redirect / docs WebFetch
+        - "platform.claude.com"        # OAuth / Console auth (this is what blocked you)
+        - "mcp-proxy.anthropic.com"    # claude.ai MCP connectors
+        - "downloads.claude.ai"        # updates / plugin binaries
+        - "storage.googleapis.com"     # plugin metadata / artifacts (optional but commonly hit)
+
+        - "github.com"
+        - "*.githubusercontent.com"
+      allowed_ports:
+        - "443"  
+    egress: "proxy_only"
+    allow_local_dns: true
+    proxy:
+      listen: "127.0.0.1:0"
+      require_sni_match: true
+      allow_ip_literals: false
+    feedback: "SYSTEM FEEDBACK: Network connection blocked. You are attempting to exfiltrate data to an unapproved destination."
+
+  destructive_command_prevention:
+    description: "Blocks the agent from executing dangerous shell commands that could destroy the system."
+    block_on:
+      syscall: "execve"
+      command_patterns:
+        - "rm"
+        - "dd"
+        - "/usr/bin/rm"
+        - "/bin/rm"
+        - "/usr/bin/dd" 
+        #- "rm -rf /*"
+        #- "mkfs"
+        #- "dd if=/dev/zero"
+    feedback: "SYSTEM FEEDBACK: Destructive command blocked. You do not have permission to format drives or wipe root directories."

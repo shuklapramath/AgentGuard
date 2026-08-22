@@ -1,0 +1,51 @@
+# Starter policy created by AgentGuard.
+# Edit this file to add or remove rules for your project.
+
+policies:
+  credential_protection:
+    description: "Prevents the agent from reading sensitive files, API keys, and private SSH keys."
+    block_on:
+      syscall: "openat"
+      path_patterns:
+        - ".env"
+        - ".aws/credentials"
+        - "id_rsa"
+        - ".kube/config"
+    feedback: "SYSTEM FEEDBACK: You cannot read credential files. You are not authorized to access production secrets."
+
+  exfiltration_prevention:
+    description: "Stops the agent from sending data to unauthorized external IP addresses or domains."
+    block_on:
+      syscall: "connect"
+      allowed_hosts:
+        # --- Required for Claude Code ↔ Anthropic ---
+        - "api.anthropic.com"
+        - "claude.ai"
+        - "claude.com"
+        - "platform.claude.com"
+        - "mcp-proxy.anthropic.com"
+        - "downloads.claude.ai"
+        - "storage.googleapis.com"
+        - "github.com"
+        - "*.githubusercontent.com"
+      allowed_ports:
+        - "443"
+    egress: "proxy_only"
+    allow_local_dns: true
+    proxy:
+      listen: "127.0.0.1:0"
+      require_sni_match: true
+      allow_ip_literals: false
+    feedback: "SYSTEM FEEDBACK: Network connection blocked. You are attempting to exfiltrate data to an unapproved destination."
+
+  destructive_command_prevention:
+    description: "Blocks the agent from executing dangerous shell commands that could destroy the system."
+    block_on:
+      syscall: "execve"
+      command_patterns:
+        - "rm"
+        - "dd"
+        - "/usr/bin/rm"
+        - "/bin/rm"
+        - "/usr/bin/dd"
+    feedback: "SYSTEM FEEDBACK: Destructive command blocked. You do not have permission to format drives or wipe root directories."
