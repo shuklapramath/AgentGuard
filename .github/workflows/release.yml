@@ -1,0 +1,36 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build linux binaries
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/agentguard-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/agentguard-linux-arm64 .
+          (cd dist && sha256sum agentguard-linux-amd64 agentguard-linux-arm64 > checksums.txt)
+          file dist/*
+
+      - name: Upload GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/agentguard-linux-amd64
+            dist/agentguard-linux-arm64
+            dist/checksums.txt
+          generate_release_notes: true
