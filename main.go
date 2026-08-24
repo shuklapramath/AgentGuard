@@ -30,13 +30,6 @@ import (
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go monitor monitor.bpf.c
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go enforcer enforcer.bpf.c
 
-const (
-	violationStoreDir  = "/tmp/agentguard/violations"
-	agentGuardLogDir   = "/tmp/agentguard"
-	agentGuardLogPath  = "/tmp/agentguard/agentguard.log"
-	activeSessionPath  = "/tmp/agentguard/active_session"
-)
-
 // verbose enables ultra-noisy per-event JSON and full SSL request dumps in the log file.
 var verbose bool
 
@@ -517,6 +510,7 @@ func applyCommandPatterns(m *ebpf.Map, patterns []NamedPattern) error {
 }
 
 func main() {
+	initStateDirs()
 	args := parseAgentGuardArgs()
 	if len(args) < 2 {
 		printUsage()

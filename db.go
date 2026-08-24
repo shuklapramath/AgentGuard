@@ -13,8 +13,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const agentGuardDBPath = "/tmp/agentguard/agentguard.db"
-
 var (
 	db				*sql.DB
 	bootTimeAnchor	time.Time
@@ -51,7 +49,7 @@ func initDB(path string) {
 	if path == "" {
 		path = agentGuardDBPath
 	}
-	if err := os.MkdirAll("/tmp/agentguard", 0755); err != nil {
+	if err := os.MkdirAll(agentGuardLogDir, 0755); err != nil {
 		log.Fatalf("failed to create db dir: %v", err)
 	}
 

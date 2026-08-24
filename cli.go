@@ -158,6 +158,7 @@ Flags (before the command):
 
 Env:
   AGENTGUARD_POLICY      Explicit policy file (must exist)
+  AGENTGUARD_STATE_DIR   IPC/log/db root (default /tmp/agentguard)
 
 Examples:
   agentguard init

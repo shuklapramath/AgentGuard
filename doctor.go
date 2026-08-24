@@ -30,6 +30,13 @@ func cmdDoctor(rest []string) error {
 		fmt.Printf("[OK]   policy (%s): %s\n", note, path)
 	}
 
+	fmt.Printf("[OK]   state dir: %s\n", agentGuardLogDir)
+	if os.Getenv("AGENTGUARD_STATE_DIR") != "" {
+		fmt.Printf("       from AGENTGUARD_STATE_DIR\n")
+	} else {
+		fmt.Printf("       default (/tmp/agentguard)\n")
+	}
+
 	btf := "/sys/kernel/btf/vmlinux"
 	if st, err := os.Stat(btf); err != nil {
 		fmt.Printf("[FAIL] BTF: %s not readable (%v)\n", btf, err)
