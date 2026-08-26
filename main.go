@@ -661,30 +661,43 @@ func runEnforcer(args []string) {
 			log.Fatal("launch mode requires exfiltration_prevention / proxy policy")
 		}
 		proxyURL := fmt.Sprintf("http://user:%s@%s", proxyServer.Token(), proxyServer.Addr())
-	
-		agentCmd = exec.Command(args[2], args[3:]...)
-		agentCmd.Env = append(os.Environ(),
-			"HTTP_PROXY="+proxyURL,
-			"HTTPS_PROXY="+proxyURL,
-			"http_proxy="+proxyURL,
-			"https_proxy="+proxyURL,
+
+		id, idErr := sudoLaunchIdentity()
+		if idErr != nil {
+			log.Fatalf("launch identity: %v", idErr)
+		}
+		if id == nil && os.Geteuid() == 0 {
+			log.Printf("WARNING: running as root without SUDO_USER — agent will use /root/.claude")
+		}
+
+		agentPath := resolveAgentPath(args[2], id)
+		agentCmd = exec.Command(agentPath, args[3:]...)
+		applyLaunchIdentity(agentCmd, id, []string{
+			"HTTP_PROXY=" + proxyURL,
+			"HTTPS_PROXY=" + proxyURL,
+			"http_proxy=" + proxyURL,
+			"https_proxy=" + proxyURL,
 			"NO_PROXY=127.0.0.1,localhost,::1",
 			"no_proxy=127.0.0.1,localhost,::1",
-		)
+		})
 		agentCmd.Stdin = os.Stdin
 		agentCmd.Stdout = os.Stdout
 		agentCmd.Stderr = os.Stderr
 
 		// Hand the TTY to Claude: stop mirroring AgentGuard logs to stderr.
 		quietAgentGuardLogs()
-	
+
 		if err := agentCmd.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to start agent: %v\n", err)
 			log.Fatalf("failed to start agent: %v", err)
 		}
 		targetPID = agentCmd.Process.Pid
-		//targetPath = args[2] // or Readlink /proc/pid/exe after start
-		log.Printf("🚀 launched agent pid=%d via proxy %s", targetPID, proxyServer.Addr())
+		if id != nil {
+			log.Printf("🚀 launched agent pid=%d uid=%d user=%s home=%s path=%s via proxy %s",
+				targetPID, id.Uid, id.User, id.Home, agentPath, proxyServer.Addr())
+		} else {
+			log.Printf("🚀 launched agent pid=%d via proxy %s", targetPID, proxyServer.Addr())
+		}
 	
 	case len(args) >= 2:
 		// Debug attach mode (old behavior)

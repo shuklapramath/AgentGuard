@@ -24,3 +24,26 @@ jobs:
 
       - name: Version
         run: ./agentguard version
+
+  image:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build linux binary
+        run: |
+          mkdir -p docker-context
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o docker-context/agentguard-amd64 .
+
+      - name: Build runtime image
+        run: docker build -f docker/Dockerfile --build-arg TARGETARCH=amd64 -t agentguard:ci docker-context
+
+      - name: Smoke
+        run: |
+          docker run --rm agentguard:ci agentguard version
+          docker run --rm agentguard:ci test -x /usr/local/bin/agentguard

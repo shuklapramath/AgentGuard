@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -14,9 +16,38 @@ func cmdDoctor(rest []string) error {
 	}
 
 	fmt.Printf("agentguard doctor %s\n", agentGuardVersion)
-	fmt.Printf("os=%s arch=%s\n\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("os=%s arch=%s euid=%d\n\n", runtime.GOOS, runtime.GOARCH, os.Geteuid())
 
 	ok := true
+	claudeHome := ""
+	checkHooks := false
+
+	if os.Geteuid() == 0 {
+		id, err := sudoLaunchIdentity()
+		if err != nil {
+			fmt.Printf("[FAIL] launch identity: %v\n", err)
+			ok = false
+		} else if id != nil {
+			fmt.Printf("[OK]   sudo → agent should run as %s uid=%d HOME=%s\n",
+				id.User, id.Uid, id.Home)
+			fmt.Printf("       Claude would use %s\n", filepath.Join(id.Home, ".claude"))
+			claudeHome = id.Home
+			checkHooks = true
+		} else {
+			fmt.Printf("[FAIL] euid=0 and no SUDO_USER; Claude will use /root/.claude; hooks in ~/.claude will be ignored\n")
+			ok = false
+		}
+	} else {
+		fmt.Printf("[INFO] not root; launch identity drop applies only under sudo\n")
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Printf("[FAIL] home directory: %v\n", err)
+			ok = false
+		} else {
+			claudeHome = home
+			checkHooks = true
+		}
+	}
 
 	path, created, err := resolvePolicyPath(policyFlag)
 	if err != nil {
@@ -30,7 +61,26 @@ func cmdDoctor(rest []string) error {
 		fmt.Printf("[OK]   policy (%s): %s\n", note, path)
 	}
 
-	fmt.Printf("[OK]   state dir: %s\n", agentGuardLogDir)
+	st, err := os.Stat(agentGuardLogDir)
+	switch {
+	case err != nil && os.IsNotExist(err):
+		fmt.Printf("[INFO] state dir %s not created yet (created at runtime)\n", agentGuardLogDir)
+	case err != nil:
+		fmt.Printf("[WARN] state dir %s: %v\n", agentGuardLogDir, err)
+	default:
+		id, _ := sudoLaunchIdentity()
+		if os.Geteuid() == 0 && id != nil {
+			mode := st.Mode().Perm()
+			if mode&0002 == 0 && mode&0070 == 0 {
+				fmt.Printf("[WARN] %s mode %o — user-run hook may not be able to write (want 0777)\n",
+					agentGuardLogDir, mode)
+			} else {
+				fmt.Printf("[OK]   state dir %s mode %o\n", agentGuardLogDir, mode)
+			}
+		} else {
+			fmt.Printf("[OK]   state dir: %s\n", agentGuardLogDir)
+		}
+	}
 	if os.Getenv("AGENTGUARD_STATE_DIR") != "" {
 		fmt.Printf("       from AGENTGUARD_STATE_DIR\n")
 	} else {
@@ -78,12 +128,49 @@ func cmdDoctor(rest []string) error {
 		fmt.Printf("[INFO] colima: %s\n", path)
 	}
 
+	if checkHooks {
+		settingsPath := filepath.Join(claudeHome, ".claude", "settings.json")
+		res := doctorCheckHookSettings(settingsPath)
+		switch {
+		case res.ok:
+			fmt.Printf("[OK]   hooks: %s\n", res.command)
+			fmt.Printf("       file: %s\n", settingsPath)
+		case res.missing:
+			fmt.Printf("[FAIL] Claude settings not found: %s (run: agentguard init)\n", settingsPath)
+			ok = false
+		case res.oldHook:
+			fmt.Printf("[FAIL] hooks still call agentguard-hook: %s\n", settingsPath)
+			ok = false
+		default:
+			fmt.Printf("[FAIL] Claude hooks in %s: %s\n", settingsPath, res.detail)
+			ok = false
+		}
+	}
+
+	installedOK := false
+	if st, err := os.Stat(installedAgentguard); err != nil || st.IsDir() || st.Mode()&0111 == 0 {
+		fmt.Printf("[FAIL] installed binary missing: %s\n", installedAgentguard)
+		ok = false
+	} else {
+		fmt.Printf("[OK]   installed binary: %s\n", installedAgentguard)
+		installedOK = true
+	}
+
 	self, err := os.Executable()
 	if err != nil {
 		fmt.Printf("[WARN] executable path: %v\n", err)
 	} else {
-		fmt.Printf("[OK]   binary: %s\n", self)
-		fmt.Printf("       Claude hook command should be: %s hook\n", self)
+		selfResolved := resolvePath(self)
+		fmt.Printf("[OK]   binary: %s\n", selfResolved)
+		if installedOK {
+			instResolved := resolvePath(installedAgentguard)
+			if selfResolved == instResolved {
+				fmt.Printf("[OK]   doctor binary is the installed agentguard\n")
+			} else {
+				fmt.Printf("[WARN] doctor is %s; Claude hooks use %s hook — reinstall if hook code changed\n",
+					selfResolved, installedAgentguard)
+			}
+		}
 	}
 
 	fmt.Println()
@@ -93,4 +180,73 @@ func cmdDoctor(rest []string) error {
 	}
 	fmt.Println("doctor: ok")
 	return nil
+}
+
+type hookCheckResult struct {
+	ok      bool
+	missing bool
+	oldHook bool
+	command string
+	detail  string
+}
+
+func doctorCheckHookSettings(settingsPath string) hookCheckResult {
+	b, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return hookCheckResult{missing: true, detail: err.Error()}
+	}
+	var wrap struct {
+		Hooks map[string][]hookMatcher `json:"hooks"`
+	}
+	if err := json.Unmarshal(b, &wrap); err != nil {
+		return hookCheckResult{detail: "invalid JSON: " + err.Error()}
+	}
+
+	need := []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"}
+	var sawOld bool
+	var hookCmd string
+	var missing []string
+	for _, ev := range need {
+		found := false
+		for _, m := range wrap.Hooks[ev] {
+			for _, h := range m.Hooks {
+				c := strings.TrimSpace(h.Command)
+				if strings.Contains(c, "agentguard-hook") {
+					sawOld = true
+				}
+				if isAgentGuardHookSubcommand(c) {
+					found = true
+					if hookCmd == "" {
+						hookCmd = c
+					}
+				}
+			}
+		}
+		if !found {
+			missing = append(missing, ev)
+		}
+	}
+	if sawOld {
+		return hookCheckResult{oldHook: true, detail: "still uses agentguard-hook"}
+	}
+	if len(missing) > 0 {
+		return hookCheckResult{detail: "missing agentguard hook on " + strings.Join(missing, ", ")}
+	}
+	return hookCheckResult{ok: true, command: hookCmd}
+}
+
+// isAgentGuardHookSubcommand is the live hook: `agentguard hook`, not the old trampoline.
+func isAgentGuardHookSubcommand(cmd string) bool {
+	s := strings.TrimSpace(cmd)
+	if s == "" || strings.Contains(s, "agentguard-hook") {
+		return false
+	}
+	return strings.HasSuffix(s, "agentguard hook") || strings.Contains(s, "/agentguard hook")
+}
+
+func resolvePath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
 }

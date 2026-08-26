@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -91,9 +92,10 @@ func dispatchCLI(args []string) bool {
 		return true
 
 	case "up":
-		fmt.Fprintln(os.Stderr, "agentguard up: not implemented yet (Phase 3 — Docker image)")
-		fmt.Fprintln(os.Stderr, "On Linux, run: sudo agentguard -- <agent>")
-		os.Exit(2)
+		if err := cmdUp(rest); err != nil {
+			fmt.Fprintf(os.Stderr, "agentguard up: %v\n", err)
+			os.Exit(1)
+		}
 		return true
 
 	case "run":
@@ -126,12 +128,35 @@ func cmdInit(rest []string) error {
 	if err != nil {
 		return err
 	}
-	path, err := createStarterPolicy(cwd)
+	policyPath, err := createStarterPolicy(cwd)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Wrote %s\n", path)
-	fmt.Println("Edit this file, then run: sudo agentguard -- <agent>")
+	fmt.Printf("Wrote %s\n", policyPath)
+
+	hookCmd, err := hookCommand()
+	if err != nil {
+		return fmt.Errorf("resolve hook command: %w", err)
+	}
+
+	home, err := initTargetHome()
+	if err != nil {
+		return fmt.Errorf("resolve home for hooks: %w", err)
+	}
+	userSettings := filepath.Join(home, ".claude", "settings.json")
+	if err := mergeClaudeHooks(userSettings, hookCmd); err != nil {
+		return err
+	}
+	fmt.Printf("Wrote %s\n", userSettings)
+
+	projSettings := filepath.Join(cwd, ".claude", "settings.json")
+	if err := mergeClaudeHooks(projSettings, hookCmd); err != nil {
+		return err
+	}
+	fmt.Printf("Wrote %s\n", projSettings)
+
+	fmt.Printf("Hook command: %s\n", hookCmd)
+	fmt.Println("Restart Claude if it is running, then: sudo agentguard -- claude")
 	return nil
 }
 
@@ -139,17 +164,21 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `AgentGuard — kernel-enforced agent supervisor
 
 Usage:
-  sudo agentguard [flags] -- <agent> [args...]   Launch and supervise an agent
+  sudo agentguard [flags] -- <agent> [args...]   Load eBPF as root; start <agent> as SUDO_USER
   sudo agentguard [flags] <pid>                 Attach to an existing PID
-  sudo agentguard [flags] run -- <agent> [...]  Same as launch (explicit)
-  sudo agentguard [flags] run <pid>             Same as attach (explicit)
+  sudo agentguard [flags] run -- <agent> [...]  Same as launch
+  sudo agentguard [flags] run <pid>             Same as attach
 
-  agentguard init                               Create policies/default.yaml
-  agentguard doctor                             Check environment / policy
-  agentguard hook                               Claude Code hook entrypoint
-  agentguard up                                 (coming soon) Docker secure env
+  agentguard init                               Policy YAML + Claude hooks in YOUR ~/.claude
+  agentguard doctor                             Check kernel, policy, launch home, hooks
+  agentguard hook                               Claude Code hook (do not run by hand)
+  agentguard up                                 Docker shell (privileged + BTF); then: sudo agentguard -- claude
   agentguard version
   agentguard help
+
+Under sudo, Claude uses /home/$SUDO_USER/.claude — not /root/.claude.
+Hooks must exec: %s hook
+Do not edit /root/.claude when you launched via sudo from your account.
 
 Flags (before the command):
   -v, --verbose          Verbose logging
@@ -159,10 +188,12 @@ Flags (before the command):
 Env:
   AGENTGUARD_POLICY      Explicit policy file (must exist)
   AGENTGUARD_STATE_DIR   IPC/log/db root (default /tmp/agentguard)
+  AGENTGUARD_IMAGE       Image for agentguard up (default agentguard:runtime)
 
 Examples:
   agentguard init
-  sudo agentguard -- /home/ebpf/.local/bin/claude
+  sudo agentguard -- claude
+  sudo agentguard -- /usr/bin/claude
   sudo agentguard --policy ./policies/default.yaml -- claude
-`)
+`, installedAgentguard)
 }
