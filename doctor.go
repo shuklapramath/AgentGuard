@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,16 +50,15 @@ func cmdDoctor(rest []string) error {
 		}
 	}
 
-	path, created, err := resolvePolicyPath(policyFlag)
-	if err != nil {
+	path, err := findPolicyPath(policyFlag)
+	switch {
+	case err != nil:
 		fmt.Printf("[FAIL] policy: %v\n", err)
 		ok = false
-	} else {
-		note := "found"
-		if created {
-			note = "created starter"
-		}
-		fmt.Printf("[OK]   policy (%s): %s\n", note, path)
+	case path == "":
+		fmt.Printf("[INFO] no policy in this directory (run: agentguard init)\n")
+	default:
+		fmt.Printf("[OK]   policy (found): %s\n", path)
 	}
 
 	st, err := os.Stat(agentGuardLogDir)
@@ -89,18 +89,24 @@ func cmdDoctor(rest []string) error {
 
 	btf := "/sys/kernel/btf/vmlinux"
 	if st, err := os.Stat(btf); err != nil {
-		fmt.Printf("[FAIL] BTF: %s not readable (%v)\n", btf, err)
-		ok = false
+		if runtime.GOOS != "linux" {
+			fmt.Printf("[INFO] BTF: %s not readable on this host (%v)\n", btf, err)
+			fmt.Println("       Enforcement runs inside: agentguard up")
+		} else {
+			fmt.Printf("[FAIL] BTF: %s not readable (%v)\n", btf, err)
+			ok = false
+		}
 	} else {
 		fmt.Printf("[OK]   BTF: %s (%d bytes)\n", btf, st.Size())
 	}
 
 	cmdline, err := os.ReadFile("/proc/cmdline")
 	if err != nil {
-		fmt.Printf("[WARN] /proc/cmdline: %v (are you on Linux?)\n", err)
 		if runtime.GOOS != "linux" {
+			fmt.Printf("[INFO] /proc/cmdline: %v\n", err)
 			fmt.Println("       AgentGuard enforcement requires Linux (or Colima/Docker Linux VM).")
-			ok = false
+		} else {
+			fmt.Printf("[WARN] /proc/cmdline: %v (are you on Linux?)\n", err)
 		}
 	} else {
 		s := string(cmdline)
@@ -112,12 +118,25 @@ func cmdDoctor(rest []string) error {
 		}
 	}
 
-	if path, err := exec.LookPath("docker"); err != nil {
-		fmt.Printf("[INFO] docker: not on PATH\n")
+	if dpath, err := exec.LookPath("docker"); err != nil {
+		if runtime.GOOS != "linux" {
+			fmt.Printf("[FAIL] docker: not on PATH (required for agentguard up)\n")
+			ok = false
+		} else {
+			fmt.Printf("[INFO] docker: not on PATH\n")
+		}
 	} else {
-		fmt.Printf("[INFO] docker: %s\n", path)
-		if err := exec.Command("docker", "info").Run(); err != nil {
-			fmt.Printf("[WARN] docker info failed: %v\n", err)
+		fmt.Printf("[INFO] docker: %s\n", dpath)
+		info := exec.Command("docker", "info")
+		info.Stdout = io.Discard
+		info.Stderr = io.Discard
+		if err := info.Run(); err != nil {
+			if runtime.GOOS != "linux" {
+				fmt.Printf("[FAIL] docker info failed: %v\n", err)
+				ok = false
+			} else {
+				fmt.Printf("[WARN] docker info failed: %v\n", err)
+			}
 		} else {
 			fmt.Printf("[OK]   docker daemon reachable\n")
 		}

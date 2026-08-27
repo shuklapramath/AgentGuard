@@ -24,34 +24,62 @@ var policySearchNames = []string{
 	".agentguard/default.yaml",
 }
 
-// resolvePolicyPath finds or creates the policy file.
+// findPolicyPath locates a policy file. Never creates one.
 //
 // Order:
-//  1. explicit (--policy) — must exist; never auto-create
-//  2. AGENTGUARD_POLICY — must exist; never auto-create
+//  1. explicit (--policy) — must exist
+//  2. AGENTGUARD_POLICY — must exist
 //  3. walk cwd upward for policies/default.yaml or .agentguard/default.yaml
-//  4. create ./policies/default.yaml from the embedded starter
-func resolvePolicyPath(explicit string) (path string, created bool, err error) {
+func findPolicyPath(explicit string) (path string, err error) {
 	if explicit != "" {
 		abs, err := filepath.Abs(explicit)
 		if err != nil {
-			return "", false, fmt.Errorf("resolve --policy path: %w", err)
+			return "", fmt.Errorf("resolve --policy path: %w", err)
 		}
 		if err := requireRegularFile(abs); err != nil {
-			return "", false, fmt.Errorf("policy file not found: %s (from --policy): %w", abs, err)
+			return "", fmt.Errorf("policy file not found: %s (from --policy): %w", abs, err)
 		}
-		return abs, false, nil
+		return abs, nil
 	}
 
 	if env := os.Getenv("AGENTGUARD_POLICY"); env != "" {
 		abs, err := filepath.Abs(env)
 		if err != nil {
-			return "", false, fmt.Errorf("resolve AGENTGUARD_POLICY: %w", err)
+			return "", fmt.Errorf("resolve AGENTGUARD_POLICY: %w", err)
 		}
 		if err := requireRegularFile(abs); err != nil {
-			return "", false, fmt.Errorf("policy file not found: %s (from AGENTGUARD_POLICY): %w", abs, err)
+			return "", fmt.Errorf("policy file not found: %s (from AGENTGUARD_POLICY): %w", abs, err)
 		}
-		return abs, false, nil
+		return abs, nil
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("get working directory: %w", err)
+	}
+	start, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolve working directory: %w", err)
+	}
+	if found, ok := findPolicyWalkingUp(start); ok {
+		return found, nil
+	}
+	return "", nil
+}
+
+// resolvePolicyPath finds or creates the policy file.
+//
+// Order:
+//
+//	1–3. findPolicyPath
+//	4. create ./policies/default.yaml from the embedded starter
+func resolvePolicyPath(explicit string) (path string, created bool, err error) {
+	path, err = findPolicyPath(explicit)
+	if err != nil {
+		return "", false, err
+	}
+	if path != "" {
+		return path, false, nil
 	}
 
 	cwd, err := os.Getwd()
@@ -62,11 +90,6 @@ func resolvePolicyPath(explicit string) (path string, created bool, err error) {
 	if err != nil {
 		return "", false, fmt.Errorf("resolve working directory: %w", err)
 	}
-
-	if found, ok := findPolicyWalkingUp(start); ok {
-		return found, false, nil
-	}
-
 	createdPath, err := createStarterPolicy(start)
 	if err != nil {
 		return "", false, err

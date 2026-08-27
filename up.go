@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 func cmdUp(rest []string) error {
@@ -13,7 +15,7 @@ func cmdUp(rest []string) error {
 
 	image := os.Getenv("AGENTGUARD_IMAGE")
 	if image == "" {
-		image = "agentguard:runtime"
+		image = "ghcr.io/shuklapramath/agentguard:latest"
 	}
 
 	cwd, err := os.Getwd()
@@ -24,6 +26,22 @@ func cmdUp(rest []string) error {
 	docker, err := exec.LookPath("docker")
 	if err != nil {
 		return fmt.Errorf("docker not on PATH")
+	}
+
+	info := exec.Command(docker, "info")
+	info.Stdout = io.Discard
+	info.Stderr = io.Discard
+	if err := info.Run(); err != nil {
+		return fmt.Errorf("docker is not usable (%v)\nStart Docker or Colima, then retry. Use sudo if the docker socket is root-only.", err)
+	}
+
+	policy := filepath.Join(cwd, "policies", "default.yaml")
+	st, err := os.Stat(policy)
+	if err != nil {
+		return fmt.Errorf("missing %s; run: agentguard init", policy)
+	}
+	if st.IsDir() {
+		return fmt.Errorf("%s is a directory; run: agentguard init", policy)
 	}
 
 	args := []string{

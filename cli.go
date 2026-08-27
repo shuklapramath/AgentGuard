@@ -188,7 +188,7 @@ Flags (before the command):
 Env:
   AGENTGUARD_POLICY      Explicit policy file (must exist)
   AGENTGUARD_STATE_DIR   IPC/log/db root (default /tmp/agentguard)
-  AGENTGUARD_IMAGE       Image for agentguard up (default agentguard:runtime)
+  AGENTGUARD_IMAGE       Image for agentguard up (default ghcr.io/shuklapramath/agentguard:latest)
 
 Examples:
   agentguard init
