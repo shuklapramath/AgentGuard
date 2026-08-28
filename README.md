@@ -1,5 +1,7 @@
 # AgentGuard
 
+License: [Apache-2.0](LICENSE)
+
 **Linux eBPF LSM supervisor for coding agents.**
 
 One binary: loads policy into the kernel and starts the agent as the invoking user (not `root`). 
