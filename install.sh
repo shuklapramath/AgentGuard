@@ -171,10 +171,12 @@ install_macos() {
 	cat <<'EOF'
 
 Next:
+  agentguard login
   cd <project>
   agentguard init
   agentguard up
-  # inside the container (not on the Mac host):
+  # inside, first machine only (installs into ~/.agentguard/runtime):
+  curl -fsSL https://claude.ai/install.sh | bash
   sudo agentguard -- claude
 EOF
 }

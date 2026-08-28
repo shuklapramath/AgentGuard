@@ -16,8 +16,12 @@ COPY agentguard-${TARGETARCH} /usr/local/bin/agentguard
 RUN chmod 0755 /usr/local/bin/agentguard
 
 # ubuntu:24.04 already has user ubuntu (uid 1000). Do not useradd -u 1000.
-RUN echo 'ubuntu ALL=(ALL) NOPASSWD: /usr/local/bin/agentguard' > /etc/sudoers.d/ubuntu \
-    && chmod 0440 /etc/sudoers.d/ubuntu
+RUN printf '%s\n' \
+        'Defaults:ubuntu env_keep += "ANTHROPIC_API_KEY"' \
+        'ubuntu ALL=(ALL) NOPASSWD: /usr/local/bin/agentguard' \
+        > /etc/sudoers.d/ubuntu \
+    && chmod 0440 /etc/sudoers.d/ubuntu \
+    && visudo -cf /etc/sudoers.d/ubuntu
 
 WORKDIR /workspace
 USER ubuntu

@@ -91,6 +91,13 @@ func dispatchCLI(args []string) bool {
 		runHook() // never returns
 		return true
 
+	case "login":
+		if err := cmdLogin(rest); err != nil {
+			fmt.Fprintf(os.Stderr, "agentguard login: %v\n", err)
+			os.Exit(1)
+		}
+		return true
+
 	case "up":
 		if err := cmdUp(rest); err != nil {
 			fmt.Fprintf(os.Stderr, "agentguard up: %v\n", err)
@@ -172,7 +179,8 @@ Usage:
   agentguard init                               Policy YAML + Claude hooks in YOUR ~/.claude
   agentguard doctor                             Check kernel, policy, launch home, hooks
   agentguard hook                               Claude Code hook (do not run by hand)
-  agentguard up                                 Docker shell (privileged + BTF); then: sudo agentguard -- claude
+  agentguard login                              Write ~/.agentguard/anthropic_key (stdin, not argv)
+  agentguard up                                 Docker shell (privileged + BTF); runtime persisted under ~/.agentguard/runtime; then: sudo agentguard -- claude
   agentguard version
   agentguard help
 
@@ -189,9 +197,12 @@ Env:
   AGENTGUARD_POLICY      Explicit policy file (must exist)
   AGENTGUARD_STATE_DIR   IPC/log/db root (default /tmp/agentguard)
   AGENTGUARD_IMAGE       Image for agentguard up (default ghcr.io/shuklapramath/agentguard:latest)
+  ANTHROPIC_API_KEY      Passed into up (overrides ~/.agentguard/anthropic_key)
 
 Examples:
+  agentguard login
   agentguard init
+  agentguard up
   sudo agentguard -- claude
   sudo agentguard -- /usr/bin/claude
   sudo agentguard --policy ./policies/default.yaml -- claude

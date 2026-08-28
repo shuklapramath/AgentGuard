@@ -1,29 +1,29 @@
 package main
 
 import (
-	"os"
 	"bytes"
 	"context"
 	"encoding/binary"
-	"log"
-	"os/exec"
-	"strconv"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
-	"encoding/json"
-	"fmt"
-	"net"
-	"os/signal"
-	"syscall"
+	"gopkg.in/yaml.v3"
 	"io"
+	"log"
+	"net"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
-	"errors"
-	"path/filepath"
-	"gopkg.in/yaml.v3"
-	"sort"
+	"syscall"
 	"time"
 )
 
@@ -42,9 +42,10 @@ var agentGuardLogFile *os.File
 // so operators see progress; call quietAgentGuardLogs() before handing the TTY
 // to Claude in launch mode.
 func initAgentGuardLog() (*os.File, error) {
-	if err := os.MkdirAll(agentGuardLogDir, 0755); err != nil {
+	if err := os.MkdirAll(agentGuardLogDir, 0777); err != nil {
 		return nil, fmt.Errorf("create log dir: %w", err)
 	}
+	_ = os.Chmod(agentGuardLogDir, 0777)
 	f, err := os.OpenFile(agentGuardLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("open log file: %w", err)
@@ -71,15 +72,15 @@ func quietAgentGuardLogs() {
 }
 
 type NamedPattern struct {
-	Pattern		string
-	PolicyID	uint32
+	Pattern  string
+	PolicyID uint32
 }
 
 type PendingViolation struct {
-	Reason		string	`json:"reason"`
-	PolicyType	uint8	`json:"policy_type"`
-	Path		string	`json:"path"`
-	TimestampNs	uint64	`json:"timestamp_ns"`
+	Reason      string `json:"reason"`
+	PolicyType  uint8  `json:"policy_type"`
+	Path        string `json:"path"`
+	TimestampNs uint64 `json:"timestamp_ns"`
 }
 
 type Event struct {
@@ -87,62 +88,62 @@ type Event struct {
 	Pid         uint32
 	Ppid        uint32
 	Comm        [16]byte
-	EventType  	uint8
+	EventType   uint8
 	FileName    [256]byte
-	Daddr 		[4]byte
-	Dport		uint16
-	Command		[256]byte
-	PolicyType	uint32
-} 
+	Daddr       [4]byte
+	Dport       uint16
+	Command     [256]byte
+	PolicyType  uint32
+}
 
 type OutputEvent struct {
 	TimestampNs uint64 `json:"timestamp_ns"`
-	Pid		    uint32 `json:"pid"`
-	Ppid		uint32 `json:"ppid,omitempty"`
-	Comm		string `json:"comm"`
+	Pid         uint32 `json:"pid"`
+	Ppid        uint32 `json:"ppid,omitempty"`
+	Comm        string `json:"comm"`
 	EventType   string `json:"event_type"`
-	FileName	string `json:"filename,omitempty"`
-	DestIP		string `json:"dest_ip,omitempty"`
-	DestPort	uint16 `json:"dest_port,omitempty"`
-	Command		string `json:"command,omitempty"`
+	FileName    string `json:"filename,omitempty"`
+	DestIP      string `json:"dest_ip,omitempty"`
+	DestPort    uint16 `json:"dest_port,omitempty"`
+	Command     string `json:"command,omitempty"`
 }
 
 type ProcessNode struct {
-	Pid  uint32
-	Ppid uint32
-	Comm string
+	Pid      uint32
+	Ppid     uint32
+	Comm     string
 	Children []*ProcessNode
-	Events []OutputEvent
+	Events   []OutputEvent
 }
 
 type ViolationEvent struct {
-	TimestampNs 	uint64
-	Pid 			uint32
-	PolicyType		uint32
-	TypedComm		[16]byte
-	CanonicalPath	[256]byte
-	Detail			[256]byte
+	TimestampNs   uint64
+	Pid           uint32
+	PolicyType    uint32
+	TypedComm     [16]byte
+	CanonicalPath [256]byte
+	Detail        [256]byte
 }
 
 type AgentPolicy struct {
-	Description	string `yaml:"description"`
-    BlockOn struct {
-        PathPatterns     []string `yaml:"path_patterns"`
-        CommandPatterns  []string `yaml:"command_patterns"`
-		AllowedHosts		[]string `yaml:"allowed_hosts"`
-		AllowedPorts		[]string `yaml:"allowed_ports"`
-        //DestinationNotIn []string `yaml:"destination_not_in"`
-    } `yaml:"block_on"`
-	Egress				string	 `yaml:"egress"`
-	AllowLocalDNS		bool	 `yaml:"allow_local_dns"`
+	Description string `yaml:"description"`
+	BlockOn     struct {
+		PathPatterns    []string `yaml:"path_patterns"`
+		CommandPatterns []string `yaml:"command_patterns"`
+		AllowedHosts    []string `yaml:"allowed_hosts"`
+		AllowedPorts    []string `yaml:"allowed_ports"`
+		//DestinationNotIn []string `yaml:"destination_not_in"`
+	} `yaml:"block_on"`
+	Egress        string `yaml:"egress"`
+	AllowLocalDNS bool   `yaml:"allow_local_dns"`
 
-	Proxy struct{
-		Listen			string `yaml:"listen"`
-		RequireSNIMatch	bool   `yaml:"require_sni_match"`
+	Proxy struct {
+		Listen          string `yaml:"listen"`
+		RequireSNIMatch bool   `yaml:"require_sni_match"`
 		AllowIPLiterals bool   `yaml:"allow_ip_literals"`
 	} `yaml:"proxy"`
-    
-    Feedback string `yaml:"feedback"` 
+
+	Feedback string `yaml:"feedback"`
 }
 
 type PolicyKind int
@@ -154,10 +155,10 @@ const (
 )
 
 type ResolvedPolicy struct {
-	Name		string
-	Kind		PolicyKind
-	ID			uint32
-	Feedback	string
+	Name     string
+	Kind     PolicyKind
+	ID       uint32
+	Feedback string
 }
 
 type PolicyFile struct {
@@ -168,19 +169,19 @@ var (
 	policyByID = make(map[uint32]ResolvedPolicy)
 
 	sessionIDByPid = make(map[uint32]string)
-	sessionMutex sync.Mutex
+	sessionMutex   sync.Mutex
 
-	tree = make(map[uint32]*ProcessNode) 
+	tree    = make(map[uint32]*ProcessNode)
 	rootPID uint32
 )
 
 func loadAllPolicies(pf *PolicyFile) (
-	pathPatterns []NamedPattern, 
+	pathPatterns []NamedPattern,
 	commandPatterns []NamedPattern,
 	proxyPolicy *ProxyPolicy,
 	enforceNetwork bool,
 	allowLocalDNS bool,
-	) {
+) {
 	var nextID uint32 = 1
 
 	names := make([]string, 0, len(pf.Policies))
@@ -196,13 +197,13 @@ func loadAllPolicies(pf *PolicyFile) (
 
 		switch {
 		case len(p.BlockOn.PathPatterns) > 0:
-			policyByID[id] = ResolvedPolicy{Name : name, Kind : KindPath, ID : id, Feedback : p.Feedback}
+			policyByID[id] = ResolvedPolicy{Name: name, Kind: KindPath, ID: id, Feedback: p.Feedback}
 			for _, pattern := range p.BlockOn.PathPatterns {
 				clean := strings.TrimPrefix(pattern, "**/")
-				pathPatterns = append(pathPatterns, NamedPattern{Pattern : clean, PolicyID : id})
+				pathPatterns = append(pathPatterns, NamedPattern{Pattern: clean, PolicyID: id})
 			}
 		case len(p.BlockOn.AllowedHosts) > 0:
-			policyByID[id] = ResolvedPolicy{Name : name, Kind : KindNetwork, ID : id, Feedback : p.Feedback}
+			policyByID[id] = ResolvedPolicy{Name: name, Kind: KindNetwork, ID: id, Feedback: p.Feedback}
 			portMap := make(map[int]bool)
 			for _, portStr := range p.BlockOn.AllowedPorts {
 				portVal, err := strconv.Atoi(portStr)
@@ -213,24 +214,24 @@ func loadAllPolicies(pf *PolicyFile) (
 				portMap[portVal] = true
 			}
 			proxyPolicy = &ProxyPolicy{
-				PolicyID:		id,
-				Feedback:		p.Feedback,
-				AllowedHosts:	p.BlockOn.AllowedHosts,
-				AllowedPorts:	portMap,
-				AllowIPLiteral:	p.Proxy.AllowIPLiterals,
+				PolicyID:       id,
+				Feedback:       p.Feedback,
+				AllowedHosts:   p.BlockOn.AllowedHosts,
+				AllowedPorts:   portMap,
+				AllowIPLiteral: p.Proxy.AllowIPLiterals,
 			}
 			enforceNetwork = p.Egress == "proxy_only"
 			allowLocalDNS = p.AllowLocalDNS
 
 		case len(p.BlockOn.CommandPatterns) > 0:
-			policyByID[id] = ResolvedPolicy{Name : name, Kind : KindCommand, ID : id, Feedback : p.Feedback}
+			policyByID[id] = ResolvedPolicy{Name: name, Kind: KindCommand, ID: id, Feedback: p.Feedback}
 			for _, pattern := range p.BlockOn.CommandPatterns {
 				bare := coarseReduceCommand(pattern)
-				commandPatterns = append(commandPatterns, NamedPattern{Pattern : bare, PolicyID : id})
+				commandPatterns = append(commandPatterns, NamedPattern{Pattern: bare, PolicyID: id})
 			}
 		}
 	}
-	return 
+	return
 }
 
 func coarseReduceCommand(pattern string) string {
@@ -243,7 +244,7 @@ func coarseReduceCommand(pattern string) string {
 	if strings.HasPrefix(first, "/") {
 		return first
 	}
-	return first	// "rm - rf /*" -> "rm"
+	return first // "rm - rf /*" -> "rm"
 }
 
 func loadPolicies(path string) (*PolicyFile, error) {
@@ -351,7 +352,7 @@ func formatFeedbackReason(policyType uint32, path string) string {
 	}
 
 	// Check if the reason string has a '%s' placeholder for the path
-	if strings.Contains(policy.Feedback, "%s"){
+	if strings.Contains(policy.Feedback, "%s") {
 		return fmt.Sprintf(policy.Feedback, path)
 	}
 
@@ -366,21 +367,21 @@ func policyNameForID(policyID uint32) string {
 	return "unknown_policy"
 }
 
-func getOrCreateNode(pid uint32) *ProcessNode{
-	if node, ok := tree[pid]; ok{
+func getOrCreateNode(pid uint32) *ProcessNode {
+	if node, ok := tree[pid]; ok {
 		return node
 	}
-	node := &ProcessNode{Pid : pid}
+	node := &ProcessNode{Pid: pid}
 	tree[pid] = node
 	return node
 }
 
-func parseCString(b []byte) string{
+func parseCString(b []byte) string {
 	idx := bytes.IndexByte(b, 0)
-	if idx == -1{
-		return string(b)	//No null byte found, return the whole thing
+	if idx == -1 {
+		return string(b) //No null byte found, return the whole thing
 	}
-	return string(b[ : idx])	// Slice off the null byte and everything after it
+	return string(b[:idx]) // Slice off the null byte and everything after it
 }
 
 const (
@@ -542,11 +543,11 @@ func runEnforcer(args []string) {
 	initDB(agentGuardDBPath)
 	apiStartedAt = time.Now()
 
-	if err := rlimit.RemoveMemlock(); err != nil{
+	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Fatalf("Failed to remove memlock limit: %v", err)
 	}
 	objs := monitorObjects{}
-	if err := loadMonitorObjects(&objs, nil); err != nil{
+	if err := loadMonitorObjects(&objs, nil); err != nil {
 		log.Fatal(err)
 	}
 	defer objs.Close()
@@ -618,7 +619,7 @@ func runEnforcer(args []string) {
 	enforcerObjs := enforcerObjects{}
 	if err := enforcerSpec.LoadAndAssign(&enforcerObjs, &ebpf.CollectionOptions{
 		MapReplacements: map[string]*ebpf.Map{
-			"tracked_pids" : objs.TrackedPids,
+			"tracked_pids": objs.TrackedPids,
 		},
 	}); err != nil {
 		log.Fatal(err)
@@ -651,9 +652,9 @@ func runEnforcer(args []string) {
 	var (
 		targetPID int
 		//targetPath string
-		agentCmd  *exec.Cmd // nil in attach-PID mode
+		agentCmd *exec.Cmd // nil in attach-PID mode
 	)
-	
+
 	switch {
 	case len(args) >= 3 && args[1] == "--":
 		// Launch mode: sudo ./agentguard [--verbose] -- /home/ebpf/.local/bin/claude ...
@@ -698,7 +699,7 @@ func runEnforcer(args []string) {
 		} else {
 			log.Printf("🚀 launched agent pid=%d via proxy %s", targetPID, proxyServer.Addr())
 		}
-	
+
 	case len(args) >= 2:
 		// Debug attach mode (old behavior)
 		targetPID, err = strconv.Atoi(args[1])
@@ -707,18 +708,18 @@ func runEnforcer(args []string) {
 		}
 		//targetPath, _ = os.Readlink(fmt.Sprintf("/proc/%d/exe", targetPID))
 		log.Printf("tracking existing pid %d", targetPID)
-	
+
 	default:
 		printUsage()
 		os.Exit(2)
 	}
-	
+
 	if err := objs.TrackedPids.Update(uint32(targetPID), uint8(1), 0); err != nil {
 		log.Fatal("failed to add pid to map:", err)
 	}
 	apiTrackedPids = objs.TrackedPids
 	log.Printf("tracking pid %d\n", targetPID)
-	
+
 	rootPID = uint32(targetPID)
 	root := getOrCreateNode(rootPID)
 	root.Comm = "root"
@@ -756,22 +757,24 @@ func runEnforcer(args []string) {
 	}
 	defer tpExecve.Close()
 
-	rd, err := ringbuf.NewReader(objs.Events) 
+	rd, err := ringbuf.NewReader(objs.Events)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer rd.Close()
 
 	lsmLink, err := link.AttachLSM(link.LSMOptions{
-		Program : enforcerObjs.CheckFileOpen,
+		Program: enforcerObjs.CheckFileOpen,
 	})
-	if err != nil{log.Fatal("attaching LSM hook failed:", err)}
+	if err != nil {
+		log.Fatal("attaching LSM hook failed:", err)
+	}
 	defer lsmLink.Close()
 
 	lsmConnectLink, err := link.AttachLSM(link.LSMOptions{
 		Program: enforcerObjs.CheckSocketConnect,
 	})
-	if err != nil{
+	if err != nil {
 		log.Fatalf("Failed to attach socket_connect LSM hook:  %v", err)
 	}
 	defer lsmConnectLink.Close()
@@ -784,7 +787,7 @@ func runEnforcer(args []string) {
 	defer lsmSendmsgLink.Close()
 
 	// raw-socket creation
-	lsmSocketCreateLink, err := link.AttachLSM(link.LSMOptions{Program : enforcerObjs.CheckSocketCreate})
+	lsmSocketCreateLink, err := link.AttachLSM(link.LSMOptions{Program: enforcerObjs.CheckSocketCreate})
 	if err != nil {
 		log.Fatalf("Failed to attach socket_create LSM hook: %v", err)
 	}
@@ -794,14 +797,14 @@ func runEnforcer(args []string) {
 	lsmExecLink, err := link.AttachLSM(link.LSMOptions{
 		Program: enforcerObjs.CheckExec,
 	})
-	if err != nil{
+	if err != nil {
 		log.Fatalf("Failed to attach bprm_check_security LSM hook: %v", err)
 	}
 	defer lsmExecLink.Close()
 
 	// Plug go into the other end of the pipe so it can start catching the reports
 	violationReader, err := ringbuf.NewReader(enforcerObjs.Violations)
-	if err != nil{
+	if err != nil {
 		log.Fatalf("Failed to open violations ring buffer: %v", err)
 	}
 	defer violationReader.Close()
@@ -836,7 +839,7 @@ func runEnforcer(args []string) {
 
 			// High-priority alert (log file only — keeps Claude TTY clean)
 			log.Printf("🚨 SECURITY VIOLATION BLOCKED 🚨")
-			log.Printf("PID: %d | Policy Type: %d | Process: %s | Target: %s", 
+			log.Printf("PID: %d | Policy Type: %d | Process: %s | Target: %s",
 				vEvent.Pid, vEvent.PolicyType, cleanComm, cleanPath)
 
 			// Resolve session for IPC (hook active_session → PID map → rootPID)
@@ -847,23 +850,23 @@ func runEnforcer(args []string) {
 			feedbackSent := false
 			if sessionID != "" {
 				err := writePendingViolation(sessionID, PendingViolation{
-					Reason:		reason,
-					PolicyType:	uint8(vEvent.PolicyType),
-					Path:		cleanPath,
-					TimestampNs:vEvent.TimestampNs,
+					Reason:      reason,
+					PolicyType:  uint8(vEvent.PolicyType),
+					Path:        cleanPath,
+					TimestampNs: vEvent.TimestampNs,
 				})
-				if err != nil{
+				if err != nil {
 					log.Printf("❌ Failed to write IPC violation file for session %s: %v", sessionID, err)
 				} else {
 					feedbackSent = true
 					log.Printf("[STEP 5 CONFIRMED] ✅ Violation written for session %s (will be delivered by feedback hook)", sessionID)
 				}
 			} else {
-					log.Printf("⚠️ Violation caught for PID %d, but no Session ID mapped yet.", vEvent.Pid)
+				log.Printf("⚠️ Violation caught for PID %d, but no Session ID mapped yet.", vEvent.Pid)
 			}
 
-			recordViolation(vEvent.Pid, vEvent.PolicyType, cleanComm, cleanPath, 
-			reason, sessionID, "lsm", vEvent.TimestampNs, feedbackSent)
+			recordViolation(vEvent.Pid, vEvent.PolicyType, cleanComm, cleanPath,
+				reason, sessionID, "lsm", vEvent.TimestampNs, feedbackSent)
 		}
 	}()
 
@@ -903,8 +906,8 @@ func runEnforcer(args []string) {
 
 			out := OutputEvent{
 				TimestampNs: e.TimestampNs,
-				Pid: 		 e.Pid,
-				Comm:		 parseCString(e.Comm[:]),
+				Pid:         e.Pid,
+				Comm:        parseCString(e.Comm[:]),
 			}
 
 			switch e.EventType {
@@ -937,7 +940,7 @@ func runEnforcer(args []string) {
 			if node.Comm == "" {
 				node.Comm = out.Comm
 			}
-			node.Events = append(node.Events, out)		// Add the complete output 
+			node.Events = append(node.Events, out) // Add the complete output
 
 			data, _ := json.Marshal(out)
 			if verbose {
@@ -953,7 +956,7 @@ func runEnforcer(args []string) {
 		}
 	} else {
 		<-ctx.Done()
-	}	
+	}
 }
 
 func boolToU8(b bool) uint8 {

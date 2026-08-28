@@ -2,21 +2,21 @@ package main
 
 import (
 	"database/sql"
-	"log"
-	"time"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 	_ "modernc.org/sqlite"
 )
 
 var (
-	db				*sql.DB
-	bootTimeAnchor	time.Time
-	ktimeAnchorNs	uint64
+	db             *sql.DB
+	bootTimeAnchor time.Time
+	ktimeAnchorNs  uint64
 )
 
 // --- TIME TRANSLATION ---
@@ -49,9 +49,10 @@ func initDB(path string) {
 	if path == "" {
 		path = agentGuardDBPath
 	}
-	if err := os.MkdirAll(agentGuardLogDir, 0755); err != nil {
+	if err := os.MkdirAll(agentGuardLogDir, 0777); err != nil {
 		log.Fatalf("failed to create db dir: %v", err)
 	}
+	_ = os.Chmod(agentGuardLogDir, 0777)
 
 	var err error
 	db, err = sql.Open("sqlite", path)
@@ -86,60 +87,60 @@ func initDB(path string) {
 	CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
 	CREATE INDEX IF NOT EXISTS idex_events_ts ON events(timestamp);
 	`
-	if _,err := db.Exec(schema); err != nil {
+	if _, err := db.Exec(schema); err != nil {
 		log.Fatalf("failed to create schema: %v", err)
 	}
 
-	// Existing DBs created before payload existed. 
+	// Existing DBs created before payload existed.
 	_, _ = db.Exec(`ALTER TABLE events ADD COLUMN payload TEXT NOT NULL DEFAULT '{}'`)
 }
 
 // --- DATABASE INSERTER ---
 
 type DBEvent struct {
-	Timestamp		time.Time
-	AgentPid		uint32
-	AgentName		string
-	EventType		string
-	Path			*string
-	Destination		*string
-	Command			*string
-	Action			string
-	PolicyViolated	*string
-	FeedbackSent	bool
-	Payload			string
+	Timestamp      time.Time
+	AgentPid       uint32
+	AgentName      string
+	EventType      string
+	Path           *string
+	Destination    *string
+	Command        *string
+	Action         string
+	PolicyViolated *string
+	FeedbackSent   bool
+	Payload        string
 }
 
 type auditPayload struct {
-	Timestamp		string	`json:"timestamp"`
-	Pid				uint32	`json:"pid"`
-	Comm 			string	`json:"comm"`
-	EventType		string	`json:"event_type"`
-	Action			string	`json:"action"`
-	Policy 			string	`json:"policy"`
-	PolicyID		uint32 	`json:"policy_id"`
-	Path 			*string	`json:"path"`
-	Destination 	*string	`json:"destination"`
-	Command 		*string	`json:"command"`
-	Reason  		string	`json:"reason"`
-	FeedbackSent	bool	`json:"feedback_sent"`
-	SessionID		string	`json:"session_id"`
-	Source			string	`json:"source"`
+	Timestamp    string  `json:"timestamp"`
+	Pid          uint32  `json:"pid"`
+	Comm         string  `json:"comm"`
+	EventType    string  `json:"event_type"`
+	Action       string  `json:"action"`
+	Policy       string  `json:"policy"`
+	PolicyID     uint32  `json:"policy_id"`
+	Path         *string `json:"path"`
+	Destination  *string `json:"destination"`
+	Command      *string `json:"command"`
+	Reason       string  `json:"reason"`
+	FeedbackSent bool    `json:"feedback_sent"`
+	SessionID    string  `json:"session_id"`
+	Source       string  `json:"source"`
 }
 
 type EventRow struct {
-	ID				int64 			`json:"id"`
-	Timestamp		string  		`json:"timestamp"`
-	AgentPid		uint32 			`json:"agent_pid"`
-	AgentName		string 			`json:"agent_name"`
-	EventType		string 			`json:"event_type"`
-	Path			*string 		`json:"path"`
-	Destination		*string 		`json:"destination"`
-	Command			*string 		`json:"command"`
-	Action			string 			`json:"action"`
-	PolicyViolated	*string 		`json:"policy_violated"`
-	FeedbackSent	bool			`json:"feedback_sent"`
-	Payload			json.RawMessage `json:"payload"`
+	ID             int64           `json:"id"`
+	Timestamp      string          `json:"timestamp"`
+	AgentPid       uint32          `json:"agent_pid"`
+	AgentName      string          `json:"agent_name"`
+	EventType      string          `json:"event_type"`
+	Path           *string         `json:"path"`
+	Destination    *string         `json:"destination"`
+	Command        *string         `json:"command"`
+	Action         string          `json:"action"`
+	PolicyViolated *string         `json:"policy_violated"`
+	FeedbackSent   bool            `json:"feedback_sent"`
+	Payload        json.RawMessage `json:"payload"`
 }
 
 func nullStr(ns sql.NullString) *string {
@@ -150,16 +151,16 @@ func nullStr(ns sql.NullString) *string {
 	return &s
 }
 
-func queryEvents(filterPid *uint32, blockedOnly bool, limit int) ([]EventRow, error){
+func queryEvents(filterPid *uint32, blockedOnly bool, limit int) ([]EventRow, error) {
 	if db == nil {
 		return nil, fmt.Errorf("db not initialized")
 	}
-	if limit <= 0{
+	if limit <= 0 {
 		limit = 50
 	}
 	q := `SELECT id, timestamp, agent_pid, agent_name, event_type, path, destination, command, action, policy_violated, feedback_sent, payload FROM events`
 	var where []string
-	var args []any 
+	var args []any
 	if filterPid != nil {
 		where = append(where, "agent_pid = ?")
 		args = append(args, *filterPid)
@@ -272,20 +273,20 @@ func recordViolation(pid uint32, policyID uint32, comm, target, reason, sessionI
 	}
 
 	pl := auditPayload{
-		Timestamp: 		ts.UTC().Format(time.RFC3339),
-		Pid: 			pid,
-		Comm: 			comm,
-		EventType: 		eventType,
-		Action: 		"blocked",
-		Policy: 		policyName,
-		PolicyID: 		policyID,
-		Path:  			pathPtr, 
-		Destination: 	destPtr,
-		Command: 		cmdPtr,
-		Reason:  		reason,
-		FeedbackSent: 	feedbackSent,
-		SessionID: 		sessionID,
-		Source: 		source,
+		Timestamp:    ts.UTC().Format(time.RFC3339),
+		Pid:          pid,
+		Comm:         comm,
+		EventType:    eventType,
+		Action:       "blocked",
+		Policy:       policyName,
+		PolicyID:     policyID,
+		Path:         pathPtr,
+		Destination:  destPtr,
+		Command:      cmdPtr,
+		Reason:       reason,
+		FeedbackSent: feedbackSent,
+		SessionID:    sessionID,
+		Source:       source,
 	}
 	raw, err := json.Marshal(pl)
 	if err != nil {
@@ -294,19 +295,19 @@ func recordViolation(pid uint32, policyID uint32, comm, target, reason, sessionI
 	}
 
 	_, err = insertEvent(DBEvent{
-		Timestamp:  	ts,
-		AgentPid: 	 	pid,
-		AgentName: 	 	"claude-code",
-		EventType: 	 	eventType,
-		Path: 			pathPtr,
-		Destination: 	destPtr,
-		Command: 		cmdPtr,
-		Action: 		"blocked",
+		Timestamp:      ts,
+		AgentPid:       pid,
+		AgentName:      "claude-code",
+		EventType:      eventType,
+		Path:           pathPtr,
+		Destination:    destPtr,
+		Command:        cmdPtr,
+		Action:         "blocked",
 		PolicyViolated: &policyName,
-		FeedbackSent: 	feedbackSent,
-		Payload: 		string(raw),
+		FeedbackSent:   feedbackSent,
+		Payload:        string(raw),
 	})
-	if err != nil{
+	if err != nil {
 		log.Printf("⚠️ Failed to write audit log to DB: %v", err)
 	}
 }

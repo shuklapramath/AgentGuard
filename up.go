@@ -44,6 +44,16 @@ func cmdUp(rest []string) error {
 		return fmt.Errorf("%s is a directory; run: agentguard init", policy)
 	}
 
+	localDir, claudeDir, err := ensureUpRuntimeDirs()
+	if err != nil {
+		return err
+	}
+
+	key, err := readAnthropicAPIKey()
+	if err != nil {
+		return err
+	}
+
 	args := []string{
 		"run", "-it", "--rm",
 		"--privileged",
@@ -54,11 +64,15 @@ func cmdUp(rest []string) error {
 		"-v", cwd + ":/workspace",
 		"-v", "/sys/kernel/btf:/sys/kernel/btf:ro",
 		"-v", "/sys/kernel/debug:/sys/kernel/debug",
+		"-v", localDir + ":/home/ubuntu/.local",
+		"-v", claudeDir + ":/home/ubuntu/.claude",
 		"-w", "/workspace",
 		"-e", "AGENTGUARD_POLICY=/workspace/policies/default.yaml",
-		image,
-		"bash",
 	}
+	if key != "" {
+		args = append(args, "-e", "ANTHROPIC_API_KEY="+key)
+	}
+	args = append(args, image, "bash")
 
 	cmd := exec.Command(docker, args...)
 	cmd.Stdin = os.Stdin
