@@ -100,6 +100,14 @@ func cmdDoctor(rest []string) error {
 		fmt.Printf("[OK]   BTF: %s (%d bytes)\n", btf, st.Size())
 	}
 
+	if runtime.GOOS != "linux" {
+		fmt.Printf("[INFO] securityfs: checked inside agentguard up (Linux VM)\n")
+	} else {
+		if !doctorReportSecurityfs() {
+			ok = false
+		}
+	}
+
 	cmdline, err := os.ReadFile("/proc/cmdline")
 	if err != nil {
 		if runtime.GOOS != "linux" {
@@ -261,6 +269,38 @@ func isAgentGuardHookSubcommand(cmd string) bool {
 		return false
 	}
 	return strings.HasSuffix(s, "agentguard hook") || strings.Contains(s, "/agentguard hook")
+}
+
+func doctorReportSecurityfs() bool {
+	if !lsmFileReadable() {
+		if os.Geteuid() == 0 {
+			if err := ensureSecurityfs(); err != nil {
+				fmt.Printf("[WARN] securityfs unmounted: %v\n", err)
+				fmt.Println("       empty /sys/kernel/security is not proof BPF LSM is off")
+				return true
+			}
+		} else {
+			fmt.Printf("[WARN] securityfs unmounted: %s not readable\n", securityfsLSMPath)
+			fmt.Println("       not proof BPF LSM is off; agentguard up / sudo agentguard will try to mount")
+			return true
+		}
+	}
+
+	body, err := os.ReadFile(securityfsLSMPath)
+	if err != nil {
+		fmt.Printf("[WARN] securityfs unmounted: %s not readable (%v)\n", securityfsLSMPath, err)
+		fmt.Println("       empty /sys/kernel/security is not proof BPF LSM is off")
+		return true
+	}
+	list := strings.TrimSpace(string(body))
+	if lsmListHasBPF(list) {
+		fmt.Printf("[OK]   LSM list contains bpf: %s\n", list)
+		return true
+	}
+	fmt.Printf("[FAIL] bpf is not in the LSM list: %s\n", list)
+	fmt.Println("       securityfs is mounted; do not remount; do not write /sys/kernel/security/lsm")
+	fmt.Println("       boot the guest with bpf in lsm= (kernel cmdline) and restart Colima / the VM")
+	return false
 }
 
 func resolvePath(p string) string {

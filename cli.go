@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const agentGuardVersion = "0.1.0"
+const agentGuardVersion = "0.1.1"
 
 // parseAgentGuardArgs strips global flags from os.Args and returns a slice
 // shaped like os.Args (argv[0] = program name) for launch/attach parsing.

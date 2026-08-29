@@ -546,6 +546,21 @@ func runEnforcer(args []string) {
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Fatalf("Failed to remove memlock limit: %v", err)
 	}
+	if err := ensureSecurityfs(); err != nil {
+		log.Printf("securityfs unmounted: %v (empty /sys/kernel/security is not proof BPF LSM is off)", err)
+	} else if lsmFileReadable() {
+		body, err := os.ReadFile(securityfsLSMPath)
+		if err != nil {
+			log.Printf("securityfs: %s not readable after mount: %v", securityfsLSMPath, err)
+		} else {
+			list := strings.TrimSpace(string(body))
+			if lsmListHasBPF(list) {
+				log.Printf("LSM list contains bpf: %s", list)
+			} else {
+				log.Fatalf("bpf is not in the LSM list: %s (securityfs is mounted; do not remount; do not write %s; boot the guest with lsm=...,bpf and restart the VM)", list, securityfsLSMPath)
+			}
+		}
+	}
 	objs := monitorObjects{}
 	if err := loadMonitorObjects(&objs, nil); err != nil {
 		log.Fatal(err)

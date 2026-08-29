@@ -2,12 +2,48 @@
 
 License: [Apache-2.0](LICENSE)
 
+**MacOS (first time)**
+```
+curl -fsSL https://raw.githubusercontent.com/shuklapramath/AgentGuard/master/install.sh | bash
+agentguard login
+cd /path/to/your-project
+agentguard init
+agentguard up
+```
+`Inside the container:`
+```
+curl -fsSL https://claude.ai/install.sh | bash
+sudo agentguard -- claude
+```
+
+> **Later:** `cd /path/to/your-project` → `agentguard up` → (inside) `sudo agentguard -- claude`. Do not `sudo agentguard up`. Do not run `sudo agentguard -- claude` in a Mac terminal.
+
+**Linux (first time)**
+```
+curl -fsSL https://raw.githubusercontent.com/shuklapramath/AgentGuard/master/install.sh | bash
+curl -fsSL https://claude.ai/install.sh | bash   
+cd /path/to/your-project
+agentguard init
+sudo agentguard -- claude
+```
+
+> **Later:** `cd /path/to/your-project` then `sudo agentguard -- claude`. Skip the Claude install line if `claude` is already on the machine.
+
+> **Kernel (Linux VM on a Mac, or native Linux):** `agentguard up` and `sudo agentguard` mount `securityfs` if `/sys/kernel/security/lsm` is missing. That only makes the file **readable**. It does **not** turn BPF LSM on.
+>
+> Inside `up`, run `agentguard doctor` (or `cat /sys/kernel/security/lsm`):
+> - **unmounted** — mount failed (WARN). Empty `/sys/kernel/security` is not proof LSM is off.
+> - **LSM list contains bpf** — LSM side is OK (BTF is still required to load).
+> - **bpf is not in the LSM list** — securityfs is mounted; do not remount; do not write that file. Boot the **Colima/guest** kernel with `bpf` in `lsm=` and restart the VM. `install.sh` does not set that.
+>
+> Darwin `doctor` does not check this (macOS has no securityfs). The check runs in the Linux box.
+
 **Linux eBPF LSM supervisor for coding agents.**
 
 One binary: loads policy into the kernel and starts the agent as the invoking user (not `root`). 
 
 * **Enforcement:** Always runs via Linux. On macOS, Linux runs inside a Docker/Colima VM (`agentguard up`). A native Darwin `claude` binary is *not* supervised.
-* **Status:** `v0.1.0` (Early). Tested primarily with [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+* **Status:** `v0.1.1` (Early). Tested primarily with [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
 ---
 
@@ -15,7 +51,7 @@ One binary: loads policy into the kernel and starts the agent as the invoking us
 
 | OS | Requirements & Setup |
 | :--- | :--- |
-| **Linux** | Kernel BTF (`/sys/kernel/btf/vmlinux`), BPF LSM (`lsm=bpf` in cmdline, securityfs mounted), `sudo` access, and Claude (or another agent) on your `PATH`. |
+| **Linux** | Kernel BTF (`/sys/kernel/btf/vmlinux`), BPF LSM (`lsm=bpf` in cmdline), `sudo` access, and Claude (or another agent) on your `PATH`. |
 | **macOS** | Docker or Colima (`install.sh` automatically installs Colima via Homebrew if `docker info` fails). Supports Apple Silicon and Intel. |
 | **Windows** | WSL2 Ubuntu (follow the Linux path). |
 
@@ -31,7 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/shuklapramath/AgentGuard/master/ins
 
 This installs `/usr/local/bin/agentguard` from GitHub Releases (checksummed) and runs `agentguard doctor` (failures prior to initialization are expected).
 
-To pin a specific release version: AGENTGUARD_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/shuklapramath/AgentGuard/master/install.sh | bash.
+To pin a specific release version: AGENTGUARD_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/shuklapramath/AgentGuard/master/install.sh | bash.
 
 First run
 
@@ -96,6 +132,19 @@ sudo agentguard -- claude
 
 *(See `policies/default.yaml.example` for reference.)*
 
+### Claude feedback
+
+A deny is a kernel `EPERM`. AgentGuard also tries to tell **Claude Code** what happened, using the per-policy `feedback:` string in `policies/default.yaml` (for example `SYSTEM FEEDBACK: You cannot read credential files…`).
+
+`agentguard init` installs Claude hooks (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`) that run `agentguard hook`. After a blocked tool, Claude should get that text as extra context (not only a failed bash). Edit `feedback:` to change what it sees.
+
+This needs:
+- `sudo agentguard -- claude` (so the process is tracked)
+- hooks from `init` (restart Claude if it was already running)
+- a writable `/tmp/agentguard` (created at runtime; hooks write `active_session` / violation files)
+
+If the syscall is blocked but chat says nothing, check `/tmp/agentguard/agentguard.log` and that `agentguard doctor` reports hooks OK. Darwin `claude` is not hooked into this path; use `up`.
+
 ### Command Reference
 
 | Command | Description |
@@ -148,13 +197,13 @@ There are two separate artifacts to keep in mind: `install.sh` does not automati
 
 > **Note:** The initial (`first-ever`) `agentguard up` command will automatically pull the GHCR image by itself.
 
-### Limitations (v0.1.0)
+### Limitations (v0.1.1)
 
 * **Pre-installed Binaries:** Claude is not included in the default Docker image; install it inside `agentguard up` once per machine.
 * **Authentication:** `claude login` (OAuth) inside Docker does not work. Use `agentguard login` with an API key instead.
-* **Kernel Requirements:** `install.sh` does not enable `lsm=bpf` or mount `securityfs`. A stock kernel or Colima instance without BPF LSM enabled will fail when attaching hooks.
+* **BPF LSM:** `install.sh` does not add `lsm=bpf`. If `doctor` inside `up` reports bpf missing from the LSM list, that is guest cmdline / kernel config, not a missing mount. Securityfs is mounted automatically when the `lsm` file is unreadable.
 * **Privileges:** `agentguard up` runs with `--privileged` flags and BPF capabilities (required by design).
-* **Feedback Loops:** In-chat denial warnings require Claude hooks (`agentguard init`) and a writable `/tmp/agentguard` directory.
+* **Chat feedback:** In-chat deny text is the YAML `feedback:` field, delivered by Claude hooks (`init`). The kernel still blocks if hooks are missing; Claude just will not be told why.
 * **Scope:** Designed specifically as an eBPF LSM supervisor—not a Mac-native enforcer or hosted sandbox.
 
 > **Logs:** Output is written to `/tmp/agentguard/agentguard.log` (or `$AGENTGUARD_STATE_DIR`). To monitor in real-time, run `tail -f /tmp/agentguard/agentguard.log` in another terminal, as the active TTY is handed off to the agent.

@@ -23,5 +23,8 @@ RUN printf '%s\n' \
     && chmod 0440 /etc/sudoers.d/ubuntu \
     && visudo -cf /etc/sudoers.d/ubuntu
 
+COPY entrypoint.sh /usr/local/bin/agentguard-entrypoint
+RUN chmod 0755 /usr/local/bin/agentguard-entrypoint
+
 WORKDIR /workspace
-USER ubuntu
+ENTRYPOINT ["/usr/local/bin/agentguard-entrypoint"]
