@@ -57,6 +57,32 @@ static __always_inline int current_nspids(__u32 *tid, __u32 *tgid)
 	return 0;
 }
 
+/* task->pid / tgid are init-ns (pid_nr). Map keys are this pidns (Docker). */
+static __always_inline __u32 pid_nr_in_agent_ns(struct pid *pid)
+{
+	unsigned int level;
+
+	if (!pid)
+		return 0;
+	level = BPF_CORE_READ(pid, level);
+
+	if (level >= 0 && (__u64)BPF_CORE_READ(pid, numbers[0].ns, ns.inum) == pidns_ino)
+		return (__u32)BPF_CORE_READ(pid, numbers[0].nr);
+	if (level >= 1 && (__u64)BPF_CORE_READ(pid, numbers[1].ns, ns.inum) == pidns_ino)
+		return (__u32)BPF_CORE_READ(pid, numbers[1].nr);
+	if (level >= 2 && (__u64)BPF_CORE_READ(pid, numbers[2].ns, ns.inum) == pidns_ino)
+		return (__u32)BPF_CORE_READ(pid, numbers[2].nr);
+	if (level >= 3 && (__u64)BPF_CORE_READ(pid, numbers[3].ns, ns.inum) == pidns_ino)
+		return (__u32)BPF_CORE_READ(pid, numbers[3].nr);
+	return 0;
+}
+
+static __always_inline __u32 task_tgid_in_agent_ns(struct task_struct *task)
+{
+	/* New process: thread_pid == TGID. Same as Process.Pid in this ns. */
+	return pid_nr_in_agent_ns(BPF_CORE_READ(task, thread_pid));
+}
+
 char __license[] SEC("license") = "Dual BSD/GPL";
 
 SEC("tracepoint/syscalls/sys_enter_openat")
@@ -123,18 +149,28 @@ int handle_connect(struct trace_event_raw_sys_enter *ctx){
 SEC("raw_tp/sched_process_fork")
 int BPF_PROG(handle_fork, struct task_struct *parent, struct task_struct *child)
 {
-	/* Map keys are process TGIDs. sched_process_fork also fires for
-	 * clone() threads — inserting those TIDs filled the 1024-slot map
-	 * and new rm children were never tracked. */
-	__u32 parent_tgid = BPF_CORE_READ(parent, tgid);
-	__u32 child_tid  = BPF_CORE_READ(child, pid);
-	__u32 child_tgid = BPF_CORE_READ(child, tgid);
+	/* Map keys are process TGIDs in AgentGuard's pid ns.
+	 * sched_process_fork also fires for clone() threads — skip those.
+	 * task->pid/tgid are init-ns; do not use them as map keys. */
+	__u32 parent_tid, parent_tgid;
+	__u32 child_tid_init = BPF_CORE_READ(child, pid);
+	__u32 child_tgid_init = BPF_CORE_READ(child, tgid);
+	__u32 child_tgid;
 	__u8 one = 1;
 
-	if (child_tid != child_tgid)
+	(void)parent;
+
+	if (child_tid_init != child_tgid_init)
 		return 0;
 
+	/* current is the parent at this tracepoint */
+	if (current_nspids(&parent_tid, &parent_tgid))
+		return 0;
 	if (!bpf_map_lookup_elem(&tracked_pids, &parent_tgid))
+		return 0;
+
+	child_tgid = task_tgid_in_agent_ns(child);
+	if (!child_tgid)
 		return 0;
 
 	bpf_map_update_elem(&tracked_pids, &child_tgid, &one, BPF_ANY);

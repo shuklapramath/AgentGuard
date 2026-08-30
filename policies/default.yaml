@@ -46,7 +46,4 @@ policies:
         - "/usr/bin/rm"
         - "/bin/rm"
         - "/usr/bin/dd" 
-        #- "rm -rf /*"
-        #- "mkfs"
-        #- "dd if=/dev/zero"
     feedback: "SYSTEM FEEDBACK: Destructive command blocked. You do not have permission to format drives or wipe root directories."
