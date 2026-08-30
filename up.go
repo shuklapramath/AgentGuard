@@ -15,7 +15,7 @@ func cmdUp(rest []string) error {
 
 	image := os.Getenv("AGENTGUARD_IMAGE")
 	if image == "" {
-		image = "ghcr.io/shuklapramath/agentguard:latest"
+		image = "ghcr.io/agentguard-hq/agentguard:latest"
 	}
 
 	cwd, err := os.Getwd()

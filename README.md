@@ -4,7 +4,7 @@ License: [Apache-2.0](LICENSE)
 
 **MacOS (first time)**
 ```
-curl -fsSL https://raw.githubusercontent.com/shuklapramath/AgentGuard/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/agentguard-hq/AgentGuard/master/install.sh | bash
 agentguard login
 cd /path/to/your-project
 agentguard init
@@ -20,7 +20,7 @@ sudo agentguard -- claude
 
 **Linux (first time)**
 ```
-curl -fsSL https://raw.githubusercontent.com/shuklapramath/AgentGuard/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/agentguard-hq/AgentGuard/master/install.sh | bash
 curl -fsSL https://claude.ai/install.sh | bash   
 cd /path/to/your-project
 agentguard init
@@ -43,7 +43,7 @@ sudo agentguard -- claude
 One binary: loads policy into the kernel and starts the agent as the invoking user (not `root`). 
 
 * **Enforcement:** Always runs via Linux. On macOS, Linux runs inside a Docker/Colima VM (`agentguard up`). A native Darwin `claude` binary is *not* supervised.
-* **Status:** `v0.1.1` (Early). Tested primarily with [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+* **Status:** `v0.1.2` (Early). Tested primarily with [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
 ---
 
@@ -55,19 +55,19 @@ One binary: loads policy into the kernel and starts the agent as the invoking us
 | **macOS** | Docker or Colima (`install.sh` automatically installs Colima via Homebrew if `docker info` fails). Supports Apple Silicon and Intel. |
 | **Windows** | WSL2 Ubuntu (follow the Linux path). |
 
-> **Note:** The Docker image does **not** include Claude by default. The published image is `ghcr.io/shuklapramath/agentguard`.
+> **Note:** The Docker image does **not** include Claude by default. The published image is `ghcr.io/agentguard-hq/agentguard`.
 
 ---
 
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shuklapramath/AgentGuard/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/agentguard-hq/AgentGuard/master/install.sh | bash
 ```
 
 This installs `/usr/local/bin/agentguard` from GitHub Releases (checksummed) and runs `agentguard doctor` (failures prior to initialization are expected).
 
-To pin a specific release version: AGENTGUARD_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/shuklapramath/AgentGuard/master/install.sh | bash.
+To pin a specific release version: AGENTGUARD_VERSION=v0.1.2 curl -fsSL https://raw.githubusercontent.com/agentguard-hq/AgentGuard/master/install.sh | bash.
 
 First run
 
@@ -192,12 +192,12 @@ There are two separate artifacts to keep in mind: `install.sh` does not automati
 | Component / Change | How to Refresh |
 | :--- | :--- |
 | **Host CLI** (`up`, `login`, `install.sh`) | Re-run `install.sh`. |
-| **Image / Linux Enforcer** (`Dockerfile`, `sudoers`, `eBPF`) | Run `docker pull ghcr.io/shuklapramath/agentguard:latest`. |
+| **Image / Linux Enforcer** (`Dockerfile`, `sudoers`, `eBPF`) | Run `docker pull ghcr.io/agentguard-hq/agentguard:latest`. |
 | **Both** | Perform both steps above. |
 
 > **Note:** The initial (`first-ever`) `agentguard up` command will automatically pull the GHCR image by itself.
 
-### Limitations (v0.1.1)
+### Limitations (v0.1.2)
 
 * **Pre-installed Binaries:** Claude is not included in the default Docker image; install it inside `agentguard up` once per machine.
 * **Authentication:** `claude login` (OAuth) inside Docker does not work. Use `agentguard login` with an API key instead.

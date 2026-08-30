@@ -78,6 +78,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/shuklapramath/agentguard:latest
-            ghcr.io/shuklapramath/agentguard:${{ github.ref_name }}
-            ghcr.io/shuklapramath/agentguard:${{ steps.ver.outputs.plain }}
+            ghcr.io/agentguard-hq/agentguard:latest
+            ghcr.io/agentguard-hq/agentguard:${{ github.ref_name }}
+            ghcr.io/agentguard-hq/agentguard:${{ steps.ver.outputs.plain }}

@@ -7,7 +7,7 @@
 # Step 5: agentguard doctor (does not abort install).
 set -euo pipefail
 
-REPO="shuklapramath/AgentGuard"
+REPO="agentguard-hq/AgentGuard"
 VERSION="${AGENTGUARD_VERSION:-latest}"
 
 WITH_DOCKER=0

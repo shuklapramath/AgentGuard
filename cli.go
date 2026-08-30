@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const agentGuardVersion = "0.1.1"
+const agentGuardVersion = "0.1.2"
 
 // parseAgentGuardArgs strips global flags from os.Args and returns a slice
 // shaped like os.Args (argv[0] = program name) for launch/attach parsing.
@@ -196,7 +196,7 @@ Flags (before the command):
 Env:
   AGENTGUARD_POLICY      Explicit policy file (must exist)
   AGENTGUARD_STATE_DIR   IPC/log/db root (default /tmp/agentguard)
-  AGENTGUARD_IMAGE       Image for agentguard up (default ghcr.io/shuklapramath/agentguard:latest)
+  AGENTGUARD_IMAGE       Image for agentguard up (default ghcr.io/agentguard-hq/agentguard:latest)
   ANTHROPIC_API_KEY      Passed into up (overrides ~/.agentguard/anthropic_key)
 
 Examples:

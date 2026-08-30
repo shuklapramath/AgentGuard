@@ -1,4 +1,4 @@
-module github.com/shuklapramath/AgentGuard
+module github.com/agentguard-hq/AgentGuard
 
 go 1.26.5
 
