@@ -23,6 +23,8 @@ const (
 	monitorProgHandleExit    = "handle_exit"
 	monitorProgHandleFork    = "handle_fork"
 	monitorProgHandleOpenat  = "handle_openat"
+	monitorVarPidnsDev       = "pidns_dev"
+	monitorVarPidnsIno       = "pidns_ino"
 )
 
 // loadMonitor returns the embedded CollectionSpec for monitor.
@@ -86,6 +88,8 @@ type monitorMapSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type monitorVariableSpecs struct {
+	PidnsDev *ebpf.VariableSpec `ebpf:"pidns_dev"`
+	PidnsIno *ebpf.VariableSpec `ebpf:"pidns_ino"`
 }
 
 // monitorObjects contains all objects after they have been loaded into the kernel.
@@ -123,6 +127,8 @@ func (m *monitorMaps) Close() error {
 //
 // It can be passed to loadMonitorObjects or ebpf.CollectionSpec.LoadAndAssign.
 type monitorVariables struct {
+	PidnsDev *ebpf.Variable `ebpf:"pidns_dev"`
+	PidnsIno *ebpf.Variable `ebpf:"pidns_ino"`
 }
 
 // monitorPrograms contains all programs after they have been loaded into the kernel.

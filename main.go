@@ -561,8 +561,24 @@ func runEnforcer(args []string) {
 			}
 		}
 	}
+	pidnsDev, pidnsIno, err := currentPidns()
+	if err != nil {
+		log.Fatalf("pid ns: %v", err)
+	}
+	log.Printf("pid ns dev=%d ino=%d (tracked_pids keys use this namespace)", pidnsDev, pidnsIno)
+
+	monSpec, err := loadMonitor()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := monSpec.Variables["pidns_dev"].Set(pidnsDev); err != nil {
+		log.Fatalf("failed to set monitor pidns_dev: %v", err)
+	}
+	if err := monSpec.Variables["pidns_ino"].Set(pidnsIno); err != nil {
+		log.Fatalf("failed to set monitor pidns_ino: %v", err)
+	}
 	objs := monitorObjects{}
-	if err := loadMonitorObjects(&objs, nil); err != nil {
+	if err := monSpec.LoadAndAssign(&objs, nil); err != nil {
 		log.Fatal(err)
 	}
 	defer objs.Close()
@@ -629,6 +645,12 @@ func runEnforcer(args []string) {
 	}
 	if err := enforcerSpec.Variables["network_policy_id"].Set(networkPolicyID); err != nil {
 		log.Fatalf("failed to set network_policy_id: %v", err)
+	}
+	if err := enforcerSpec.Variables["pidns_dev"].Set(pidnsDev); err != nil {
+		log.Fatalf("failed to set enforcer pidns_dev: %v", err)
+	}
+	if err := enforcerSpec.Variables["pidns_ino"].Set(pidnsIno); err != nil {
+		log.Fatalf("failed to set enforcer pidns_ino: %v", err)
 	}
 
 	enforcerObjs := enforcerObjects{}

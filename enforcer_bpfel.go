@@ -41,6 +41,8 @@ const (
 	enforcerVarDnsAddrHost            = "dns_addr_host"
 	enforcerVarEnforceNetwork         = "enforce_network"
 	enforcerVarNetworkPolicyId        = "network_policy_id"
+	enforcerVarPidnsDev               = "pidns_dev"
+	enforcerVarPidnsIno               = "pidns_ino"
 	enforcerVarProxyAddrHost          = "proxy_addr_host"
 	enforcerVarProxyPortHost          = "proxy_port_host"
 )
@@ -115,6 +117,8 @@ type enforcerVariableSpecs struct {
 	DnsAddrHost     *ebpf.VariableSpec `ebpf:"dns_addr_host"`
 	EnforceNetwork  *ebpf.VariableSpec `ebpf:"enforce_network"`
 	NetworkPolicyId *ebpf.VariableSpec `ebpf:"network_policy_id"`
+	PidnsDev        *ebpf.VariableSpec `ebpf:"pidns_dev"`
+	PidnsIno        *ebpf.VariableSpec `ebpf:"pidns_ino"`
 	ProxyAddrHost   *ebpf.VariableSpec `ebpf:"proxy_addr_host"`
 	ProxyPortHost   *ebpf.VariableSpec `ebpf:"proxy_port_host"`
 }
@@ -168,6 +172,8 @@ type enforcerVariables struct {
 	DnsAddrHost     *ebpf.Variable `ebpf:"dns_addr_host"`
 	EnforceNetwork  *ebpf.Variable `ebpf:"enforce_network"`
 	NetworkPolicyId *ebpf.Variable `ebpf:"network_policy_id"`
+	PidnsDev        *ebpf.Variable `ebpf:"pidns_dev"`
+	PidnsIno        *ebpf.Variable `ebpf:"pidns_ino"`
 	ProxyAddrHost   *ebpf.Variable `ebpf:"proxy_addr_host"`
 	ProxyPortHost   *ebpf.Variable `ebpf:"proxy_port_host"`
 }

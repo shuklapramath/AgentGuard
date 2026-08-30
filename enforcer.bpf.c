@@ -23,6 +23,22 @@ volatile const __u16 proxy_port_host = 0;   /* host order */
 volatile const __u32 dns_addr_host   = 0;   /* 0x7f000035 -> 127.0.0.53 */
 volatile const __u32 network_policy_id = 0;
 
+/* PID namespace of AgentGuard (same ns as the agent). LSM lookups must
+ * use this ns — bpf_get_current_pid_tgid() is init-ns and misses in Docker. */
+volatile const __u64 pidns_dev = 0;
+volatile const __u64 pidns_ino = 0;
+
+static __always_inline int current_nspids(__u32 *tid, __u32 *tgid)
+{
+	struct bpf_pidns_info ns = {};
+
+	if (bpf_get_ns_current_pid_tgid(pidns_dev, pidns_ino, &ns, sizeof(ns)))
+		return -1;
+	*tid = ns.pid;
+	*tgid = ns.tgid;
+	return 0;
+}
+
 /* NOT const: lives in .bss, writable after load. This is the kill switch. */
 __u8 enforce_network  = 0;
 __u8 allow_local_dns  = 0;
@@ -199,7 +215,9 @@ static __always_inline int path_contains_128_3char(const char *buf, char p1, cha
 SEC("lsm/file_open")
 int BPF_PROG(check_file_open, struct file *file){
     bpf_printk("started");
-	__u32 pid = bpf_get_current_pid_tgid() >> 32;
+	__u32 tid, pid;
+	if (current_nspids(&tid, &pid))
+		return 0;
 	__u8 *tracked = bpf_map_lookup_elem(&tracked_pids, &pid);
 	__u32 zero = 0;
 	char *path;
@@ -330,7 +348,9 @@ int BPF_PROG(check_socket_connect, struct socket *sock, struct sockaddr *address
 
 SEC("lsm/socket_connect")
 int BPF_PROG(check_socket_connect, struct socket *sock, struct sockaddr *address, int addrlen){
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    __u32 tid, pid;
+    if (current_nspids(&tid, &pid))
+        return 0;
     if(!bpf_map_lookup_elem(&tracked_pids, &pid))
         return 0;
     __u16 family = address->sa_family;
@@ -362,7 +382,9 @@ int BPF_PROG(check_socket_connect, struct socket *sock, struct sockaddr *address
 // channel (e.g. DNS tunneling) if left unguarded.
 SEC("lsm/socket_sendmsg")
 int BPF_PROG(check_socket_sendmsg, struct socket *sock, struct msghdr *msg, int size){
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    __u32 tid, pid;
+    if (current_nspids(&tid, &pid))
+        return 0;
     if (!bpf_map_lookup_elem(&tracked_pids, &pid))
         return 0;
     // connected sockets carry no msg_name - vetted at connect()
@@ -392,7 +414,9 @@ int BPF_PROG(check_socket_sendmsg, struct socket *sock, struct msghdr *msg, int 
 // don't go through the normal connect()/sendmsg() path this policy inspects.
 SEC("lsm/socket_create")
 int BPF_PROG(check_socket_create, int family, int type, int protocol, int kern) {
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    __u32 tid, pid;
+    if (current_nspids(&tid, &pid))
+        return 0;
     if (!bpf_map_lookup_elem(&tracked_pids, &pid))
         return 0;
 
@@ -405,7 +429,9 @@ int BPF_PROG(check_socket_create, int family, int type, int protocol, int kern) 
 
 SEC("lsm/bprm_check_security")
 int BPF_PROG(check_exec, struct linux_binprm *bprm){
-	__u32 pid = bpf_get_current_pid_tgid() >> 32;
+	__u32 tid, pid;
+	if (current_nspids(&tid, &pid))
+		return 0;
 	__u32 zero = 0;
 	char *path;
 	__u32 hit_policy = 0;

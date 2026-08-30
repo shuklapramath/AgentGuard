@@ -41,11 +41,29 @@ struct {
     __type(value, __u8);
 } tracked_pids SEC(".maps");
 
+/* PID namespace of AgentGuard (same ns as the agent). Lookups must
+ * use this ns — bpf_get_current_pid_tgid() is init-ns and misses in Docker. */
+volatile const __u64 pidns_dev = 0;
+volatile const __u64 pidns_ino = 0;
+
+static __always_inline int current_nspids(__u32 *tid, __u32 *tgid)
+{
+	struct bpf_pidns_info ns = {};
+
+	if (bpf_get_ns_current_pid_tgid(pidns_dev, pidns_ino, &ns, sizeof(ns)))
+		return -1;
+	*tid = ns.pid;
+	*tgid = ns.tgid;
+	return 0;
+}
+
 char __license[] SEC("license") = "Dual BSD/GPL";
 
 SEC("tracepoint/syscalls/sys_enter_openat")
 int handle_openat(struct trace_event_raw_sys_enter *ctx){
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    __u32 tid, pid;
+    if (current_nspids(&tid, &pid))
+        return 0;
 
     __u8 *tracked = bpf_map_lookup_elem(&tracked_pids, &pid);
     if (!tracked) 
@@ -71,7 +89,9 @@ int handle_openat(struct trace_event_raw_sys_enter *ctx){
 
 SEC("tracepoint/syscalls/sys_enter_connect")
 int handle_connect(struct trace_event_raw_sys_enter *ctx){
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    __u32 tid, pid;
+    if (current_nspids(&tid, &pid))
+        return 0;
     __u8 *tracked = bpf_map_lookup_elem(&tracked_pids, &pid);
 
     if(!tracked)
@@ -138,7 +158,9 @@ int BPF_PROG(handle_fork, struct task_struct *parent, struct task_struct *child)
 
 SEC("tracepoint/syscalls/sys_enter_execve")
 int handle_execve(struct trace_event_raw_sys_enter *ctx){
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;       // child_pid
+    __u32 tid, pid;
+    if (current_nspids(&tid, &pid))
+        return 0;
     __u8 *tracked = bpf_map_lookup_elem(&tracked_pids, &pid);
 
     if (!tracked)
@@ -192,9 +214,10 @@ int handle_execve(struct trace_event_raw_sys_enter *ctx){
 
 SEC("tracepoint/sched/sched_process_exit")
 int handle_exit(struct trace_event_raw_sched_process_template *ctx){
-	__u64 pid_tgid = bpf_get_current_pid_tgid();
-	__u32 tid  = (__u32)pid_tgid;
-	__u32 tgid = pid_tgid >> 32;
+	__u32 tid, tgid;
+
+	if (current_nspids(&tid, &tgid))
+		return 0;
 
 	/* Drop a leaked thread-TID key if we ever inserted one. Do not
 	 * delete the process TGID when a worker thread exits. */
