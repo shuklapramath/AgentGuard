@@ -40,8 +40,9 @@ static __always_inline int current_nspids(__u32 *tid, __u32 *tgid)
 }
 
 /* NOT const: lives in .bss, writable after load. This is the kill switch. */
-__u8 enforce_network  = 0;
-__u8 allow_local_dns  = 0;
+__u8 enforce_network    = 0;
+__u8 allow_local_dns    = 0;
+__u8 enforce_workspace  = 0;
 
 // Reuse tracked_pids from monitor.bpf.c via MapReplacements, same pattern as ssl_probe.bpf.c
 struct {
@@ -76,6 +77,38 @@ struct {
 	__type(key, __u32);
 	__type(value, struct path_pattern_entry);
 } blocked_path_patterns SEC(".maps");
+
+/* Prefix allow-list for workspace confinement. 24 slots so the starter
+ * YAML (system prefixes + ~/.claude + ~/.local) fits; 16 was too small. */
+#define MAX_ALLOW_PREFIXES 24
+
+struct prefix_entry {
+	char pattern[MAX_PATTERN_LEN];
+	__u32 policy_id;
+	__u8  pattern_len;
+	__u8  _pad[3];
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, MAX_ALLOW_PREFIXES);
+	__type(key, __u32);
+	__type(value, struct prefix_entry);
+} allowed_path_prefixes SEC(".maps");
+
+/* Project root may be longer than 64 bytes. Dedicated 256-byte slot. */
+struct workspace_root_entry {
+	char prefix[MAX_PATH_LEN];
+	__u32 prefix_len;
+	__u32 policy_id;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, struct workspace_root_entry);
+} workspace_root SEC(".maps");
 
 /* Scratch path for file_open: map value (not stack) so path[path_len - pat_len + i]
  * is a legal variable-offset read for the verifier. */
@@ -200,6 +233,141 @@ static __always_inline __u32 match_blocked_commands(const char *path, __u32 path
 	return 0;
 }
 
+/* Prefix match with boundary: "/workspace" matches "/workspace" and
+ * "/workspace/foo", not "/workspace-evil". Mask indices like path_ends_with. */
+static __always_inline int path_starts_with_64(const char *path, __u32 path_len,
+					      const char *pat, __u32 pat_len)
+{
+	__u32 i, idx, pi;
+
+	if (pat_len == 0 || pat_len > MAX_PATTERN_LEN)
+		return 0;
+	if (path_len >= MAX_PATH_LEN || path_len < pat_len)
+		return 0;
+
+	for (i = 0; i < MAX_PATTERN_LEN; i++) {
+		if (i >= pat_len)
+			break;
+		idx = i & (MAX_PATH_LEN - 1);
+		pi = i & (MAX_PATTERN_LEN - 1);
+		if (path[idx] != pat[pi])
+			return 0;
+	}
+	if (path_len == pat_len)
+		return 1;
+	idx = pat_len & (MAX_PATH_LEN - 1);
+	return path[idx] == '/';
+}
+
+static __always_inline int path_starts_with_256(const char *path, __u32 path_len,
+					       const char *pat, __u32 pat_len)
+{
+	__u32 i, idx, pi;
+
+	if (pat_len == 0 || pat_len > MAX_PATH_LEN)
+		return 0;
+	if (path_len >= MAX_PATH_LEN || path_len < pat_len)
+		return 0;
+
+	for (i = 0; i < MAX_PATH_LEN; i++) {
+		if (i >= pat_len)
+			break;
+		idx = i & (MAX_PATH_LEN - 1);
+		pi = i & (MAX_PATH_LEN - 1);
+		if (path[idx] != pat[pi])
+			return 0;
+	}
+	if (path_len == pat_len)
+		return 1;
+	idx = pat_len & (MAX_PATH_LEN - 1);
+	return path[idx] == '/';
+}
+
+static __always_inline int path_in_workspace(const char *path, __u32 path_len)
+{
+	__u32 zero = 0, i;
+	struct workspace_root_entry *w;
+	struct prefix_entry *e;
+
+	w = bpf_map_lookup_elem(&workspace_root, &zero);
+	if (w && w->prefix_len &&
+	    path_starts_with_256(path, path_len, w->prefix, w->prefix_len))
+		return 1;
+
+	for (i = 0; i < MAX_ALLOW_PREFIXES; i++) {
+		__u32 idx = i;
+
+		e = bpf_map_lookup_elem(&allowed_path_prefixes, &idx);
+		if (!e || e->pattern_len == 0)
+			continue;
+		if (path_starts_with_64(path, path_len, e->pattern, e->pattern_len))
+			return 1;
+	}
+	return 0;
+}
+
+static __always_inline __u32 workspace_policy_id(void)
+{
+	__u32 zero = 0;
+	struct workspace_root_entry *w = bpf_map_lookup_elem(&workspace_root, &zero);
+
+	return w ? w->policy_id : 0;
+}
+
+static __always_inline int deny_path(__u32 pid, __u32 policy_id, const char *path)
+{
+	struct violation_event *v = bpf_ringbuf_reserve(&violations, sizeof(*v), 0);
+
+	if (v) {
+		v->timestamp_ns = bpf_ktime_get_ns();
+		v->pid = pid;
+		v->policy_type = policy_id;
+		bpf_get_current_comm(v->typed_comm, sizeof(v->typed_comm));
+		__builtin_memset(v->canonical_path, 0, sizeof(v->canonical_path));
+		__builtin_memset(v->detail, 0, sizeof(v->detail));
+		if (path)
+			bpf_probe_read_kernel_str(v->detail, sizeof(v->detail), path);
+		bpf_ringbuf_submit(v, 0);
+	}
+	return -EPERM;
+}
+
+/* Parent-dir check for unlink/rename. Fail closed when confinement is on. */
+static __always_inline int confine_path_struct(struct path *dirpath)
+{
+	__u32 tid, pid;
+	__u32 zero = 0;
+	char *path;
+	long n;
+	__u32 path_len;
+	__u32 pol;
+
+	if (current_nspids(&tid, &pid))
+		return 0;
+	if (!bpf_map_lookup_elem(&tracked_pids, &pid))
+		return 0;
+	if (!enforce_workspace)
+		return 0;
+
+	path = bpf_map_lookup_elem(&file_open_path, &zero);
+	if (!path)
+		return -EPERM;
+
+	__builtin_memset(path, 0, MAX_PATH_LEN);
+	n = bpf_d_path(dirpath, path, MAX_PATH_LEN);
+	pol = workspace_policy_id();
+	if (n <= 0 || n >= MAX_PATH_LEN)
+		return deny_path(pid, pol, path);
+
+	path_len = (__u32)n - 1;
+	if (path_len >= MAX_PATH_LEN)
+		path_len = MAX_PATH_LEN - 1;
+
+	if (!path_in_workspace(path, path_len))
+		return deny_path(pid, pol, path);
+	return 0;
+}
+
 static __always_inline int path_contains_128_3char(const char *buf, char p1, char p2, char p3){
     #pragma unroll
     for (int i = 0; i < 125; i++){
@@ -214,7 +382,6 @@ static __always_inline int path_contains_128_3char(const char *buf, char p1, cha
 
 SEC("lsm/file_open")
 int BPF_PROG(check_file_open, struct file *file){
-    bpf_printk("started");
 	__u32 tid, pid;
 	if (current_nspids(&tid, &pid))
 		return 0;
@@ -230,18 +397,18 @@ int BPF_PROG(check_file_open, struct file *file){
 	if (!tracked)
 		return 0;
 
-	bpf_printk("ag_fo tracked pid=%u", pid);
-
 	path = bpf_map_lookup_elem(&file_open_path, &zero);
 	if (!path) {
-		bpf_printk("ag_fo allow: no path buf pid=%u", pid);
+		if (enforce_workspace)
+			return -EPERM;
 		return 0;
 	}
 
 	__builtin_memset(path, 0, MAX_PATH_LEN);
 	n = bpf_d_path(&file->f_path, path, MAX_PATH_LEN);
-	if (n <= 0) {
-		bpf_printk("ag_fo d_path_fail allow pid=%u n=%ld", pid, n);
+	if (n <= 0 || n >= MAX_PATH_LEN) {
+		if (enforce_workspace)
+			return deny_path(pid, workspace_policy_id(), path);
 		return 0;
 	}
 	/* bpf_d_path returns length including trailing NUL */
@@ -249,8 +416,8 @@ int BPF_PROG(check_file_open, struct file *file){
 	if (path_len >= MAX_PATH_LEN)
 		path_len = MAX_PATH_LEN - 1;
 
-	bpf_printk("ag_fo d_path ok pid=%u n=%ld path_len=%u", pid, n, path_len);
-	bpf_printk("ag_fo path=%s", path);
+	if (enforce_workspace && !path_in_workspace(path, path_len))
+		return deny_path(pid, workspace_policy_id(), path);
 
 	for (__u32 i = 0; i < MAX_PATH_RULES; i++) {
 		__u32 idx = i;
@@ -262,9 +429,6 @@ int BPF_PROG(check_file_open, struct file *file){
 			continue;
 
 		matched = path_ends_with(path, path_len, e->pattern, e->pattern_len);
-		bpf_printk("ag_fo slot=%u plen=%u match=%d", i, e->pattern_len, matched);
-		bpf_printk("ag_fo pat=%s", e->pattern);
-
 		if (matched) {
 			hit = 1;
 			hit_policy = e->policy_id;
@@ -272,12 +436,8 @@ int BPF_PROG(check_file_open, struct file *file){
 		}
 	}
 
-	if (!hit) {
-		bpf_printk("ag_fo allow no_match pid=%u path_len=%u", pid, path_len);
+	if (!hit)
 		return 0;
-	}
-
-	bpf_printk("ag_fo DENY pid=%u policy=%u path_len=%u", pid, hit_policy, path_len);
 
 	v = bpf_ringbuf_reserve(&violations, sizeof(*v), 0);
 	if (v) {
@@ -290,8 +450,30 @@ int BPF_PROG(check_file_open, struct file *file){
 		bpf_probe_read_kernel_str(v->detail, sizeof(v->detail), path);
 		bpf_ringbuf_submit(v, 0);
 	}
-    bpf_printk("All Good!!");
 	return -EPERM;
+}
+
+SEC("lsm/path_unlink")
+int BPF_PROG(check_path_unlink, const struct path *dir, struct dentry *dentry)
+{
+	(void)dentry;
+	return confine_path_struct((struct path *)dir);
+}
+
+SEC("lsm/path_rename")
+int BPF_PROG(check_path_rename, const struct path *old_dir, struct dentry *old_dentry,
+	     const struct path *new_dir, struct dentry *new_dentry, unsigned int flags)
+{
+	int err;
+
+	(void)old_dentry;
+	(void)new_dentry;
+	(void)flags;
+
+	err = confine_path_struct((struct path *)old_dir);
+	if (err)
+		return err;
+	return confine_path_struct((struct path *)new_dir);
 }
 
 static __always_inline int report_and_deny(__u32 pid, __u32 daddr_host, __u16 dport) {

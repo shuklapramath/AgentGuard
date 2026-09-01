@@ -143,7 +143,11 @@ type AgentPolicy struct {
 		AllowIPLiterals bool   `yaml:"allow_ip_literals"`
 	} `yaml:"proxy"`
 
-	Feedback string `yaml:"feedback"`
+	Confine           bool     `yaml:"confine"`
+	Workspace         string   `yaml:"workspace"`
+	AllowPrefixes     []string `yaml:"allow_prefixes"`
+	AllowHomeSuffixes []string `yaml:"allow_home_suffixes"`
+	Feedback          string   `yaml:"feedback"`
 }
 
 type PolicyKind int
@@ -152,6 +156,7 @@ const (
 	KindPath PolicyKind = iota
 	KindNetwork
 	KindCommand
+	KindWorkspace
 )
 
 type ResolvedPolicy struct {
@@ -179,6 +184,7 @@ func loadAllPolicies(pf *PolicyFile) (
 	pathPatterns []NamedPattern,
 	commandPatterns []NamedPattern,
 	proxyPolicy *ProxyPolicy,
+	workspacePolicy *WorkspacePolicy,
 	enforceNetwork bool,
 	allowLocalDNS bool,
 ) {
@@ -196,6 +202,25 @@ func loadAllPolicies(pf *PolicyFile) (
 		nextID++
 
 		switch {
+		case p.Confine:
+			if workspacePolicy != nil {
+				log.Fatalf("multiple confine policies (already have policy id %d)", workspacePolicy.PolicyID)
+			}
+			root, err := resolveWorkspaceRoot(p.Workspace)
+			if err != nil {
+				log.Fatalf("workspace root: %v", err)
+			}
+			prefixes, err := resolveAllowPrefixes(p.AllowPrefixes, p.AllowHomeSuffixes)
+			if err != nil {
+				log.Fatalf("workspace allow prefixes: %v", err)
+			}
+			policyByID[id] = ResolvedPolicy{Name: name, Kind: KindWorkspace, ID: id, Feedback: p.Feedback}
+			workspacePolicy = &WorkspacePolicy{
+				PolicyID:      id,
+				Feedback:      p.Feedback,
+				Root:          root,
+				AllowPrefixes: prefixes,
+			}
 		case len(p.BlockOn.PathPatterns) > 0:
 			policyByID[id] = ResolvedPolicy{Name: name, Kind: KindPath, ID: id, Feedback: p.Feedback}
 			for _, pattern := range p.BlockOn.PathPatterns {
@@ -600,7 +625,7 @@ func runEnforcer(args []string) {
 	}
 
 	// Call new function to get seperated lists here
-	credentialPatterns, commandPatterns, proxyPolicy, enforceNetwork, allowLocalDNS := loadAllPolicies(pf)
+	credentialPatterns, commandPatterns, proxyPolicy, workspacePolicy, enforceNetwork, allowLocalDNS := loadAllPolicies(pf)
 
 	// Blind the proxy listener now (if configured) so we know its real port
 	// before freezing the enforcer's .rodata.
@@ -680,6 +705,10 @@ func runEnforcer(args []string) {
 		log.Fatalf("failed to load command patterns: %v", err)
 	}
 
+	if err := applyWorkspacePolicy(&enforcerObjs, workspacePolicy); err != nil {
+		log.Fatalf("failed to load workspace policy: %v", err)
+	}
+
 	if proxyServer != nil {
 		log.Printf("🔑 Proxy auth token: %s", proxyServer.Token())
 		log.Printf("🔒 Proxy listening on %s", proxyServer.Addr())
@@ -688,8 +717,9 @@ func runEnforcer(args []string) {
 
 	var (
 		targetPID int
-		//targetPath string
-		agentCmd *exec.Cmd // nil in attach-PID mode
+		agentCmd  *exec.Cmd // nil in attach-PID mode
+		agentPath string
+		launchID  *launchIdentity
 	)
 
 	switch {
@@ -707,8 +737,9 @@ func runEnforcer(args []string) {
 		if id == nil && os.Geteuid() == 0 {
 			log.Printf("WARNING: running as root without SUDO_USER — agent will use /root/.claude")
 		}
+		launchID = id
 
-		agentPath := resolveAgentPath(args[2], id)
+		agentPath = resolveAgentPath(args[2], id)
 		agentCmd = exec.Command(agentPath, args[3:]...)
 		applyLaunchIdentity(agentCmd, id, []string{
 			"HTTP_PROXY=" + proxyURL,
@@ -718,24 +749,10 @@ func runEnforcer(args []string) {
 			"NO_PROXY=127.0.0.1,localhost,::1",
 			"no_proxy=127.0.0.1,localhost,::1",
 		})
+		enableChildPtrace(agentCmd)
 		agentCmd.Stdin = os.Stdin
 		agentCmd.Stdout = os.Stdout
 		agentCmd.Stderr = os.Stderr
-
-		// Hand the TTY to Claude: stop mirroring AgentGuard logs to stderr.
-		quietAgentGuardLogs()
-
-		if err := agentCmd.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to start agent: %v\n", err)
-			log.Fatalf("failed to start agent: %v", err)
-		}
-		targetPID = agentCmd.Process.Pid
-		if id != nil {
-			log.Printf("🚀 launched agent pid=%d uid=%d user=%s home=%s path=%s via proxy %s",
-				targetPID, id.Uid, id.User, id.Home, agentPath, proxyServer.Addr())
-		} else {
-			log.Printf("🚀 launched agent pid=%d via proxy %s", targetPID, proxyServer.Addr())
-		}
 
 	case len(args) >= 2:
 		// Debug attach mode (old behavior)
@@ -743,23 +760,12 @@ func runEnforcer(args []string) {
 		if err != nil {
 			log.Fatal("Invalid pid: ", err)
 		}
-		//targetPath, _ = os.Readlink(fmt.Sprintf("/proc/%d/exe", targetPID))
 		log.Printf("tracking existing pid %d", targetPID)
 
 	default:
 		printUsage()
 		os.Exit(2)
 	}
-
-	if err := objs.TrackedPids.Update(uint32(targetPID), uint8(1), 0); err != nil {
-		log.Fatal("failed to add pid to map:", err)
-	}
-	apiTrackedPids = objs.TrackedPids
-	log.Printf("tracking pid %d\n", targetPID)
-
-	rootPID = uint32(targetPID)
-	root := getOrCreateNode(rootPID)
-	root.Comm = "root"
 
 	tpOpen, err := link.Tracepoint("syscalls", "sys_enter_openat", objs.HandleOpenat, nil)
 	if err != nil {
@@ -816,21 +822,18 @@ func runEnforcer(args []string) {
 	}
 	defer lsmConnectLink.Close()
 
-	// UDP sendmsg exfiltration path
 	lsmSendmsgLink, err := link.AttachLSM(link.LSMOptions{Program: enforcerObjs.CheckSocketSendmsg})
 	if err != nil {
 		log.Fatalf("Failed to attach socket_sendmsg LSM hook: %v", err)
 	}
 	defer lsmSendmsgLink.Close()
 
-	// raw-socket creation
 	lsmSocketCreateLink, err := link.AttachLSM(link.LSMOptions{Program: enforcerObjs.CheckSocketCreate})
 	if err != nil {
 		log.Fatalf("Failed to attach socket_create LSM hook: %v", err)
 	}
 	defer lsmSocketCreateLink.Close()
 
-	// Anti -rm -rf hook
 	lsmExecLink, err := link.AttachLSM(link.LSMOptions{
 		Program: enforcerObjs.CheckExec,
 	})
@@ -838,6 +841,18 @@ func runEnforcer(args []string) {
 		log.Fatalf("Failed to attach bprm_check_security LSM hook: %v", err)
 	}
 	defer lsmExecLink.Close()
+
+	lsmUnlinkLink, err := link.AttachLSM(link.LSMOptions{Program: enforcerObjs.CheckPathUnlink})
+	if err != nil {
+		log.Fatalf("Failed to attach path_unlink LSM hook: %v", err)
+	}
+	defer lsmUnlinkLink.Close()
+
+	lsmRenameLink, err := link.AttachLSM(link.LSMOptions{Program: enforcerObjs.CheckPathRename})
+	if err != nil {
+		log.Fatalf("Failed to attach path_rename LSM hook: %v", err)
+	}
+	defer lsmRenameLink.Close()
 
 	// Plug go into the other end of the pipe so it can start catching the reports
 	violationReader, err := ringbuf.NewReader(enforcerObjs.Violations)
@@ -849,43 +864,34 @@ func runEnforcer(args []string) {
 	go func() {
 		var vEvent ViolationEvent
 		for {
-			// Wait for a violation event from the kernel
 			record, err := violationReader.Read()
 			if err != nil {
 				if errors.Is(err, ringbuf.ErrClosed) {
-					return // Program is exiting
+					return
 				}
 				log.Printf("Error reading from violations ringbuf: %v", err)
 				continue
 			}
 
-			// Decode the raw bytes into our Go struct
 			if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &vEvent); err != nil {
 				log.Printf("Failed to parse violation event: %v", err)
 				continue
 			}
 
-			// Clean up the string using the helper function from earlier
 			cleanPath := parseCString(vEvent.Detail[:])
-
-			// Updated alert to show the process name that attempted the bad command
 			cleanComm := parseCString(vEvent.TypedComm[:])
 
-			// Step 4
 			log.Printf("[STEP 4 CONFIRMED] Kernel LSM fired! Received ViolationEvent for PID %d on target %s\n", vEvent.Pid, cleanPath)
-
-			// High-priority alert (log file only — keeps Claude TTY clean)
 			log.Printf("🚨 SECURITY VIOLATION BLOCKED 🚨")
 			log.Printf("PID: %d | Policy Type: %d | Process: %s | Target: %s",
 				vEvent.Pid, vEvent.PolicyType, cleanComm, cleanPath)
 
-			// Resolve session for IPC (hook active_session → PID map → rootPID)
-			// SOLUTION #1: PreToolUse hook pre-registers session ID in active_session file
-			// before tools execute, so this resolution has the best chance of finding it
 			reason := formatFeedbackReason(vEvent.PolicyType, cleanPath)
 			sessionID := resolveSessionID(vEvent.Pid)
 			feedbackSent := false
-			if sessionID != "" {
+			if reason == "" {
+				// do not write IPC
+			} else if sessionID != "" {
 				err := writePendingViolation(sessionID, PendingViolation{
 					Reason:      reason,
 					PolicyType:  uint8(vEvent.PolicyType),
@@ -906,6 +912,43 @@ func runEnforcer(args []string) {
 				reason, sessionID, "lsm", vEvent.TimestampNs, feedbackSent)
 		}
 	}()
+
+	if agentCmd != nil {
+		quietAgentGuardLogs()
+		if err := agentCmd.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to start agent: %v\n", err)
+			log.Fatalf("failed to start agent: %v", err)
+		}
+		targetPID = agentCmd.Process.Pid
+		if err := waitChildPtraceStop(targetPID); err != nil {
+			_ = agentCmd.Process.Kill()
+			log.Fatalf("ptrace hold: %v", err)
+		}
+		if err := objs.TrackedPids.Update(uint32(targetPID), uint8(1), 0); err != nil {
+			_ = agentCmd.Process.Kill()
+			log.Fatal("failed to add pid to map:", err)
+		}
+		if err := detachChildPtrace(targetPID); err != nil {
+			_ = agentCmd.Process.Kill()
+			log.Fatalf("ptrace detach: %v", err)
+		}
+		if launchID != nil {
+			log.Printf("🚀 launched agent pid=%d uid=%d user=%s home=%s path=%s via proxy %s",
+				targetPID, launchID.Uid, launchID.User, launchID.Home, agentPath, proxyServer.Addr())
+		} else {
+			log.Printf("🚀 launched agent pid=%d via proxy %s", targetPID, proxyServer.Addr())
+		}
+	} else {
+		if err := objs.TrackedPids.Update(uint32(targetPID), uint8(1), 0); err != nil {
+			log.Fatal("failed to add pid to map:", err)
+		}
+	}
+	apiTrackedPids = objs.TrackedPids
+	log.Printf("tracking pid %d\n", targetPID)
+
+	rootPID = uint32(targetPID)
+	root := getOrCreateNode(rootPID)
+	root.Comm = "root"
 
 	// --- Graceful shutdown for the long-lived proxy: SIGINT/SIGTERM now close
 	// the proxy listener cleanly via context cacellation.

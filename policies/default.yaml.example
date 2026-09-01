@@ -49,3 +49,34 @@ policies:
         - "/bin/rm"
         - "/usr/bin/dd"
     feedback: "SYSTEM FEEDBACK: Destructive command blocked. You do not have permission to format drives or wipe root directories."
+
+  workspace_confinement:
+    confine: true
+    # omit workspace: → enforcer uses EvalSymlinks(Abs(cwd)) at start
+    allow_prefixes:
+      - "/usr"
+      - "/lib"
+      - "/lib64"
+      - "/bin"
+      - "/sbin"
+      - "/opt"
+      - "/tmp"
+      - "/var/tmp"
+      - "/dev"
+      - "/run"
+      - "/etc/ssl"
+      - "/etc/hosts"
+      - "/etc/resolv.conf"
+      - "/etc/nsswitch.conf"
+      - "/etc/passwd"
+      - "/etc/group"
+      - "/etc/localtime"
+      - "/etc/ld.so.cache"
+      # /proc is a known hole (/proc/<pid>/root, environ). d_path turns
+      # /proc/self into /proc/<pid>, so a narrower prefix cannot work.
+      - "/proc"
+    allow_home_suffixes:
+      - ".claude"
+      - ".claude.json"
+      - ".local"
+    feedback: "SYSTEM FEEDBACK: You cannot access files outside this project."

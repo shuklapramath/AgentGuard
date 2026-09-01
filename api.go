@@ -137,6 +137,8 @@ func kindName(k PolicyKind) string {
 		return "network"
 	case KindCommand:
 		return "command"
+	case KindWorkspace:
+		return "workspace"
 	default:
 		return "unknown"
 	}
@@ -168,6 +170,10 @@ func handlePolicies(w http.ResponseWriter, r *http.Request) {
 			"allowed_ports": 	pol.BlockOn.AllowedPorts,
 			"egress": 			pol.Egress,
 			"allow_local_dns": 	pol.AllowLocalDNS,
+			"confine": 			pol.Confine,
+			"workspace": 		pol.Workspace,
+			"allow_prefixes": 	pol.AllowPrefixes,
+			"allow_home_suffixes": pol.AllowHomeSuffixes,
 		}
 		if rp, ok := idByName[name]; ok {
 			item["id"] = rp.ID

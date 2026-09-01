@@ -21,10 +21,26 @@ type enforcerPathPatternEntry struct {
 	Pad        [3]uint8
 }
 
+type enforcerPrefixEntry struct {
+	_          structs.HostLayout
+	Pattern    [64]int8
+	PolicyId   uint32
+	PatternLen uint8
+	Pad        [3]uint8
+}
+
+type enforcerWorkspaceRootEntry struct {
+	_         structs.HostLayout
+	Prefix    [256]int8
+	PrefixLen uint32
+	PolicyId  uint32
+}
+
 // Names of all BPF objects in the ELF.
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
+	enforcerMapAllowedPathPrefixes    = "allowed_path_prefixes"
 	enforcerMapBlockedCommandPatterns = "blocked_command_patterns"
 	enforcerMapBlockedPathPatterns    = "blocked_path_patterns"
 	enforcerMapBlockedPathsMap        = "blocked_paths_map"
@@ -32,14 +48,18 @@ const (
 	enforcerMapFileOpenPath           = "file_open_path"
 	enforcerMapTrackedPids            = "tracked_pids"
 	enforcerMapViolations             = "violations"
+	enforcerMapWorkspaceRoot          = "workspace_root"
 	enforcerProgCheckExec             = "check_exec"
 	enforcerProgCheckFileOpen         = "check_file_open"
+	enforcerProgCheckPathRename       = "check_path_rename"
+	enforcerProgCheckPathUnlink       = "check_path_unlink"
 	enforcerProgCheckSocketConnect    = "check_socket_connect"
 	enforcerProgCheckSocketCreate     = "check_socket_create"
 	enforcerProgCheckSocketSendmsg    = "check_socket_sendmsg"
 	enforcerVarAllowLocalDns          = "allow_local_dns"
 	enforcerVarDnsAddrHost            = "dns_addr_host"
 	enforcerVarEnforceNetwork         = "enforce_network"
+	enforcerVarEnforceWorkspace       = "enforce_workspace"
 	enforcerVarNetworkPolicyId        = "network_policy_id"
 	enforcerVarPidnsDev               = "pidns_dev"
 	enforcerVarPidnsIno               = "pidns_ino"
@@ -91,6 +111,8 @@ type enforcerSpecs struct {
 type enforcerProgramSpecs struct {
 	CheckExec          *ebpf.ProgramSpec `ebpf:"check_exec"`
 	CheckFileOpen      *ebpf.ProgramSpec `ebpf:"check_file_open"`
+	CheckPathRename    *ebpf.ProgramSpec `ebpf:"check_path_rename"`
+	CheckPathUnlink    *ebpf.ProgramSpec `ebpf:"check_path_unlink"`
 	CheckSocketConnect *ebpf.ProgramSpec `ebpf:"check_socket_connect"`
 	CheckSocketCreate  *ebpf.ProgramSpec `ebpf:"check_socket_create"`
 	CheckSocketSendmsg *ebpf.ProgramSpec `ebpf:"check_socket_sendmsg"`
@@ -100,6 +122,7 @@ type enforcerProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type enforcerMapSpecs struct {
+	AllowedPathPrefixes    *ebpf.MapSpec `ebpf:"allowed_path_prefixes"`
 	BlockedCommandPatterns *ebpf.MapSpec `ebpf:"blocked_command_patterns"`
 	BlockedPathPatterns    *ebpf.MapSpec `ebpf:"blocked_path_patterns"`
 	BlockedPathsMap        *ebpf.MapSpec `ebpf:"blocked_paths_map"`
@@ -107,20 +130,22 @@ type enforcerMapSpecs struct {
 	FileOpenPath           *ebpf.MapSpec `ebpf:"file_open_path"`
 	TrackedPids            *ebpf.MapSpec `ebpf:"tracked_pids"`
 	Violations             *ebpf.MapSpec `ebpf:"violations"`
+	WorkspaceRoot          *ebpf.MapSpec `ebpf:"workspace_root"`
 }
 
 // enforcerVariableSpecs contains global variables before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type enforcerVariableSpecs struct {
-	AllowLocalDns   *ebpf.VariableSpec `ebpf:"allow_local_dns"`
-	DnsAddrHost     *ebpf.VariableSpec `ebpf:"dns_addr_host"`
-	EnforceNetwork  *ebpf.VariableSpec `ebpf:"enforce_network"`
-	NetworkPolicyId *ebpf.VariableSpec `ebpf:"network_policy_id"`
-	PidnsDev        *ebpf.VariableSpec `ebpf:"pidns_dev"`
-	PidnsIno        *ebpf.VariableSpec `ebpf:"pidns_ino"`
-	ProxyAddrHost   *ebpf.VariableSpec `ebpf:"proxy_addr_host"`
-	ProxyPortHost   *ebpf.VariableSpec `ebpf:"proxy_port_host"`
+	AllowLocalDns    *ebpf.VariableSpec `ebpf:"allow_local_dns"`
+	DnsAddrHost      *ebpf.VariableSpec `ebpf:"dns_addr_host"`
+	EnforceNetwork   *ebpf.VariableSpec `ebpf:"enforce_network"`
+	EnforceWorkspace *ebpf.VariableSpec `ebpf:"enforce_workspace"`
+	NetworkPolicyId  *ebpf.VariableSpec `ebpf:"network_policy_id"`
+	PidnsDev         *ebpf.VariableSpec `ebpf:"pidns_dev"`
+	PidnsIno         *ebpf.VariableSpec `ebpf:"pidns_ino"`
+	ProxyAddrHost    *ebpf.VariableSpec `ebpf:"proxy_addr_host"`
+	ProxyPortHost    *ebpf.VariableSpec `ebpf:"proxy_port_host"`
 }
 
 // enforcerObjects contains all objects after they have been loaded into the kernel.
@@ -143,6 +168,7 @@ func (o *enforcerObjects) Close() error {
 //
 // It can be passed to loadEnforcerObjects or ebpf.CollectionSpec.LoadAndAssign.
 type enforcerMaps struct {
+	AllowedPathPrefixes    *ebpf.Map `ebpf:"allowed_path_prefixes"`
 	BlockedCommandPatterns *ebpf.Map `ebpf:"blocked_command_patterns"`
 	BlockedPathPatterns    *ebpf.Map `ebpf:"blocked_path_patterns"`
 	BlockedPathsMap        *ebpf.Map `ebpf:"blocked_paths_map"`
@@ -150,10 +176,12 @@ type enforcerMaps struct {
 	FileOpenPath           *ebpf.Map `ebpf:"file_open_path"`
 	TrackedPids            *ebpf.Map `ebpf:"tracked_pids"`
 	Violations             *ebpf.Map `ebpf:"violations"`
+	WorkspaceRoot          *ebpf.Map `ebpf:"workspace_root"`
 }
 
 func (m *enforcerMaps) Close() error {
 	return _EnforcerClose(
+		m.AllowedPathPrefixes,
 		m.BlockedCommandPatterns,
 		m.BlockedPathPatterns,
 		m.BlockedPathsMap,
@@ -161,6 +189,7 @@ func (m *enforcerMaps) Close() error {
 		m.FileOpenPath,
 		m.TrackedPids,
 		m.Violations,
+		m.WorkspaceRoot,
 	)
 }
 
@@ -168,14 +197,15 @@ func (m *enforcerMaps) Close() error {
 //
 // It can be passed to loadEnforcerObjects or ebpf.CollectionSpec.LoadAndAssign.
 type enforcerVariables struct {
-	AllowLocalDns   *ebpf.Variable `ebpf:"allow_local_dns"`
-	DnsAddrHost     *ebpf.Variable `ebpf:"dns_addr_host"`
-	EnforceNetwork  *ebpf.Variable `ebpf:"enforce_network"`
-	NetworkPolicyId *ebpf.Variable `ebpf:"network_policy_id"`
-	PidnsDev        *ebpf.Variable `ebpf:"pidns_dev"`
-	PidnsIno        *ebpf.Variable `ebpf:"pidns_ino"`
-	ProxyAddrHost   *ebpf.Variable `ebpf:"proxy_addr_host"`
-	ProxyPortHost   *ebpf.Variable `ebpf:"proxy_port_host"`
+	AllowLocalDns    *ebpf.Variable `ebpf:"allow_local_dns"`
+	DnsAddrHost      *ebpf.Variable `ebpf:"dns_addr_host"`
+	EnforceNetwork   *ebpf.Variable `ebpf:"enforce_network"`
+	EnforceWorkspace *ebpf.Variable `ebpf:"enforce_workspace"`
+	NetworkPolicyId  *ebpf.Variable `ebpf:"network_policy_id"`
+	PidnsDev         *ebpf.Variable `ebpf:"pidns_dev"`
+	PidnsIno         *ebpf.Variable `ebpf:"pidns_ino"`
+	ProxyAddrHost    *ebpf.Variable `ebpf:"proxy_addr_host"`
+	ProxyPortHost    *ebpf.Variable `ebpf:"proxy_port_host"`
 }
 
 // enforcerPrograms contains all programs after they have been loaded into the kernel.
@@ -184,6 +214,8 @@ type enforcerVariables struct {
 type enforcerPrograms struct {
 	CheckExec          *ebpf.Program `ebpf:"check_exec"`
 	CheckFileOpen      *ebpf.Program `ebpf:"check_file_open"`
+	CheckPathRename    *ebpf.Program `ebpf:"check_path_rename"`
+	CheckPathUnlink    *ebpf.Program `ebpf:"check_path_unlink"`
 	CheckSocketConnect *ebpf.Program `ebpf:"check_socket_connect"`
 	CheckSocketCreate  *ebpf.Program `ebpf:"check_socket_create"`
 	CheckSocketSendmsg *ebpf.Program `ebpf:"check_socket_sendmsg"`
@@ -193,6 +225,8 @@ func (p *enforcerPrograms) Close() error {
 	return _EnforcerClose(
 		p.CheckExec,
 		p.CheckFileOpen,
+		p.CheckPathRename,
+		p.CheckPathUnlink,
 		p.CheckSocketConnect,
 		p.CheckSocketCreate,
 		p.CheckSocketSendmsg,
