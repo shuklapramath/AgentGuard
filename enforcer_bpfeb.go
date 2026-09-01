@@ -51,7 +51,12 @@ const (
 	enforcerMapWorkspaceRoot          = "workspace_root"
 	enforcerProgCheckExec             = "check_exec"
 	enforcerProgCheckFileOpen         = "check_file_open"
+	enforcerProgCheckPathLink         = "check_path_link"
+	enforcerProgCheckPathMkdir        = "check_path_mkdir"
+	enforcerProgCheckPathMknod        = "check_path_mknod"
 	enforcerProgCheckPathRename       = "check_path_rename"
+	enforcerProgCheckPathRmdir        = "check_path_rmdir"
+	enforcerProgCheckPathSymlink      = "check_path_symlink"
 	enforcerProgCheckPathUnlink       = "check_path_unlink"
 	enforcerProgCheckSocketConnect    = "check_socket_connect"
 	enforcerProgCheckSocketCreate     = "check_socket_create"
@@ -111,7 +116,12 @@ type enforcerSpecs struct {
 type enforcerProgramSpecs struct {
 	CheckExec          *ebpf.ProgramSpec `ebpf:"check_exec"`
 	CheckFileOpen      *ebpf.ProgramSpec `ebpf:"check_file_open"`
+	CheckPathLink      *ebpf.ProgramSpec `ebpf:"check_path_link"`
+	CheckPathMkdir     *ebpf.ProgramSpec `ebpf:"check_path_mkdir"`
+	CheckPathMknod     *ebpf.ProgramSpec `ebpf:"check_path_mknod"`
 	CheckPathRename    *ebpf.ProgramSpec `ebpf:"check_path_rename"`
+	CheckPathRmdir     *ebpf.ProgramSpec `ebpf:"check_path_rmdir"`
+	CheckPathSymlink   *ebpf.ProgramSpec `ebpf:"check_path_symlink"`
 	CheckPathUnlink    *ebpf.ProgramSpec `ebpf:"check_path_unlink"`
 	CheckSocketConnect *ebpf.ProgramSpec `ebpf:"check_socket_connect"`
 	CheckSocketCreate  *ebpf.ProgramSpec `ebpf:"check_socket_create"`
@@ -214,7 +224,12 @@ type enforcerVariables struct {
 type enforcerPrograms struct {
 	CheckExec          *ebpf.Program `ebpf:"check_exec"`
 	CheckFileOpen      *ebpf.Program `ebpf:"check_file_open"`
+	CheckPathLink      *ebpf.Program `ebpf:"check_path_link"`
+	CheckPathMkdir     *ebpf.Program `ebpf:"check_path_mkdir"`
+	CheckPathMknod     *ebpf.Program `ebpf:"check_path_mknod"`
 	CheckPathRename    *ebpf.Program `ebpf:"check_path_rename"`
+	CheckPathRmdir     *ebpf.Program `ebpf:"check_path_rmdir"`
+	CheckPathSymlink   *ebpf.Program `ebpf:"check_path_symlink"`
 	CheckPathUnlink    *ebpf.Program `ebpf:"check_path_unlink"`
 	CheckSocketConnect *ebpf.Program `ebpf:"check_socket_connect"`
 	CheckSocketCreate  *ebpf.Program `ebpf:"check_socket_create"`
@@ -225,7 +240,12 @@ func (p *enforcerPrograms) Close() error {
 	return _EnforcerClose(
 		p.CheckExec,
 		p.CheckFileOpen,
+		p.CheckPathLink,
+		p.CheckPathMkdir,
+		p.CheckPathMknod,
 		p.CheckPathRename,
+		p.CheckPathRmdir,
+		p.CheckPathSymlink,
 		p.CheckPathUnlink,
 		p.CheckSocketConnect,
 		p.CheckSocketCreate,

@@ -42,6 +42,7 @@ policies:
       syscall: "execve"
       command_patterns:
         - "rm"
+        - "rmdir"
         - "dd"
         - "/usr/bin/rm"
         - "/bin/rm"

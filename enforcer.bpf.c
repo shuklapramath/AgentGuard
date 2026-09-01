@@ -332,7 +332,7 @@ static __always_inline int deny_path(__u32 pid, __u32 policy_id, const char *pat
 	return -EPERM;
 }
 
-/* Parent-dir check for unlink/rename. Fail closed when confinement is on. */
+/* Parent-dir check for unlink/rename/create. Fail closed when confinement is on. */
 static __always_inline int confine_path_struct(struct path *dirpath)
 {
 	__u32 tid, pid;
@@ -474,6 +474,83 @@ int BPF_PROG(check_path_rename, const struct path *old_dir, struct dentry *old_d
 	if (err)
 		return err;
 	return confine_path_struct((struct path *)new_dir);
+}
+
+/* path_mknod is not sleepable: bpf_d_path is illegal. bpf_path_d_path is a
+ * kfunc and is allowed on this hook when dir is the trusted LSM argument. */
+SEC("lsm/path_mknod")
+int BPF_PROG(check_path_mknod, const struct path *dir, struct dentry *dentry,
+	     umode_t mode, unsigned int dev)
+{
+	__u32 tid, pid;
+	__u32 zero = 0;
+	char *path;
+	long n;
+	__u32 path_len;
+
+	(void)dentry;
+	(void)mode;
+	(void)dev;
+
+	if (current_nspids(&tid, &pid))
+		return 0;
+	if (!bpf_map_lookup_elem(&tracked_pids, &pid))
+		return 0;
+	if (!enforce_workspace)
+		return 0;
+
+	path = bpf_map_lookup_elem(&file_open_path, &zero);
+	if (!path)
+		return -EPERM;
+
+	__builtin_memset(path, 0, MAX_PATH_LEN);
+	n = bpf_path_d_path(dir, path, MAX_PATH_LEN);
+	if (n <= 0 || n >= MAX_PATH_LEN)
+		return deny_path(pid, workspace_policy_id(), path);
+
+	path_len = (__u32)n - 1;
+	if (path_len >= MAX_PATH_LEN)
+		path_len = MAX_PATH_LEN - 1;
+
+	if (!path_in_workspace(path, path_len))
+		return deny_path(pid, workspace_policy_id(), path);
+	return 0;
+}
+
+SEC("lsm/path_mkdir")
+int BPF_PROG(check_path_mkdir, const struct path *dir, struct dentry *dentry,
+	     umode_t mode)
+{
+	(void)dentry;
+	(void)mode;
+	return confine_path_struct((struct path *)dir);
+}
+
+SEC("lsm/path_symlink")
+int BPF_PROG(check_path_symlink, const struct path *dir, struct dentry *dentry,
+	     const char *old_name)
+{
+	(void)dentry;
+	(void)old_name;
+	return confine_path_struct((struct path *)dir);
+}
+
+SEC("lsm/path_link")
+int BPF_PROG(check_path_link, struct dentry *old_dentry,
+	     const struct path *new_dir, struct dentry *new_dentry)
+{
+	(void)old_dentry;
+	(void)new_dentry;
+	/* bpf_d_path requires a trusted kernel path. A stack-built {mnt,dentry}
+	 * for the source file is rejected (R1 type=fp). Only new_dir is usable. */
+	return confine_path_struct((struct path *)new_dir);
+}
+
+SEC("lsm/path_rmdir")
+int BPF_PROG(check_path_rmdir, const struct path *dir, struct dentry *dentry)
+{
+	(void)dentry;
+	return confine_path_struct((struct path *)dir);
 }
 
 static __always_inline int report_and_deny(__u32 pid, __u32 daddr_host, __u16 dport) {

@@ -142,7 +142,16 @@ func TestLoadEnforcerSpec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"check_file_open", "check_path_unlink", "check_path_rename"} {
+	for _, name := range []string{
+		"check_file_open",
+		"check_path_unlink",
+		"check_path_rename",
+		"check_path_mknod",
+		"check_path_mkdir",
+		"check_path_symlink",
+		"check_path_link",
+		"check_path_rmdir",
+	} {
 		if spec.Programs[name] == nil {
 			t.Fatalf("missing program %s", name)
 		}
@@ -154,5 +163,23 @@ func TestLoadEnforcerSpec(t *testing.T) {
 	}
 	if spec.Variables["enforce_workspace"] == nil {
 		t.Fatal("missing variable enforce_workspace")
+	}
+}
+
+func TestKernelLoadEnforcer(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("root required to load BPF")
+	}
+	spec, err := loadEnforcer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var objs enforcerObjects
+	if err := spec.LoadAndAssign(&objs, nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { objs.Close() })
+	if objs.CheckPathMknod == nil {
+		t.Fatal("CheckPathMknod not loaded")
 	}
 }

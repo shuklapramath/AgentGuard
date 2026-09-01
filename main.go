@@ -854,6 +854,36 @@ func runEnforcer(args []string) {
 	}
 	defer lsmRenameLink.Close()
 
+	lsmMknodLink, err := link.AttachLSM(link.LSMOptions{Program: enforcerObjs.CheckPathMknod})
+	if err != nil {
+		log.Fatalf("Failed to attach path_mknod LSM hook: %v", err)
+	}
+	defer lsmMknodLink.Close()
+
+	lsmMkdirLink, err := link.AttachLSM(link.LSMOptions{Program: enforcerObjs.CheckPathMkdir})
+	if err != nil {
+		log.Fatalf("Failed to attach path_mkdir LSM hook: %v", err)
+	}
+	defer lsmMkdirLink.Close()
+
+	lsmSymlinkLink, err := link.AttachLSM(link.LSMOptions{Program: enforcerObjs.CheckPathSymlink})
+	if err != nil {
+		log.Fatalf("Failed to attach path_symlink LSM hook: %v", err)
+	}
+	defer lsmSymlinkLink.Close()
+
+	lsmHardlinkLink, err := link.AttachLSM(link.LSMOptions{Program: enforcerObjs.CheckPathLink})
+	if err != nil {
+		log.Fatalf("Failed to attach path_link LSM hook: %v", err)
+	}
+	defer lsmHardlinkLink.Close()
+
+	lsmRmdirLink, err := link.AttachLSM(link.LSMOptions{Program: enforcerObjs.CheckPathRmdir})
+	if err != nil {
+		log.Fatalf("Failed to attach path_rmdir LSM hook: %v", err)
+	}
+	defer lsmRmdirLink.Close()
+
 	// Plug go into the other end of the pipe so it can start catching the reports
 	violationReader, err := ringbuf.NewReader(enforcerObjs.Violations)
 	if err != nil {
