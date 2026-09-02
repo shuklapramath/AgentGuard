@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	maxAllowPrefixSlots = 24
+	maxAllowPrefixSlots = 25
 	maxWorkspaceRootLen = 255 // d_path path_len is capped at MAX_PATH_LEN-1
 )
 

@@ -323,9 +323,9 @@ func getSessionIDForPID(pid uint32) string {
 }
 
 // resolveSessionID picks the session id used to key violation IPC files.
-// Priority: Claude hook ground truth (active_session, UUID-shaped only) →
+// Priority: hook ground truth (active_session, Claude UUID or Codex-shaped id) →
 // exact PID SSL map → agent root PID (tools/children inherit enforcement
-// but not always the map). Non-UUID junk in active_session (e.g. test
+// but not always the map). Whitespace / junk in active_session (e.g. test
 // leftovers) must not win over the PID map.
 // SOLUTION #1: Retries reading active_session with small delay to handle
 // race condition where PreToolUse hook may still be writing it.
@@ -357,13 +357,24 @@ func resolveSessionID(pid uint32) string {
 	return ""
 }
 
-// isHookSessionID accepts Claude Code / Cursor session UUIDs only.
+// isHookSessionID accepts Claude Code / Cursor UUIDs and Codex-shaped ids
+// (docs use values like thr_…; production Codex may still send a UUID).
 func isHookSessionID(s string) bool {
-	if len(s) < 36 {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.ContainsAny(s, " \t\n") {
 		return false
 	}
-	// xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-	if s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
+	if len(s) >= 36 && s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-' {
+		return true
+	}
+	if len(s) < 8 || len(s) > 128 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
+			continue
+		}
 		return false
 	}
 	return true

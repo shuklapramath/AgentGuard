@@ -157,19 +157,36 @@ func cmdDoctor(rest []string) error {
 
 	if checkHooks {
 		settingsPath := filepath.Join(claudeHome, ".claude", "settings.json")
-		res := doctorCheckHookSettings(settingsPath)
+		res := doctorCheckHookSettings(settingsPath, claudeHookEvents)
 		switch {
 		case res.ok:
-			fmt.Printf("[OK]   hooks: %s\n", res.command)
+			fmt.Printf("[OK]   Claude hooks: %s\n", res.command)
 			fmt.Printf("       file: %s\n", settingsPath)
 		case res.missing:
 			fmt.Printf("[INFO] Claude settings not found: %s\n", settingsPath)
 			fmt.Printf("       optional: agentguard init --claude  (kernel still enforces without hooks)\n")
 		case res.oldHook:
-			fmt.Printf("[FAIL] hooks still call agentguard-hook: %s\n", settingsPath)
+			fmt.Printf("[FAIL] Claude hooks still call agentguard-hook: %s\n", settingsPath)
 			ok = false
 		default:
 			fmt.Printf("[FAIL] Claude hooks in %s: %s\n", settingsPath, res.detail)
+			ok = false
+		}
+
+		codexPath := filepath.Join(claudeHome, ".codex", "hooks.json")
+		cres := doctorCheckHookSettings(codexPath, codexHookEvents)
+		switch {
+		case cres.ok:
+			fmt.Printf("[OK]   Codex hooks: %s\n", cres.command)
+			fmt.Printf("       file: %s\n", codexPath)
+		case cres.missing:
+			fmt.Printf("[INFO] Codex hooks not found: %s\n", codexPath)
+			fmt.Printf("       optional: agentguard init --codex  (kernel still enforces without hooks)\n")
+		case cres.oldHook:
+			fmt.Printf("[FAIL] Codex hooks still call agentguard-hook: %s\n", codexPath)
+			ok = false
+		default:
+			fmt.Printf("[FAIL] Codex hooks in %s: %s\n", codexPath, cres.detail)
 			ok = false
 		}
 	}
@@ -209,6 +226,11 @@ func cmdDoctor(rest []string) error {
 	return nil
 }
 
+var (
+	claudeHookEvents = []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"}
+	codexHookEvents  = []string{"PreToolUse", "PostToolUse"}
+)
+
 type hookCheckResult struct {
 	ok      bool
 	missing bool
@@ -217,7 +239,7 @@ type hookCheckResult struct {
 	detail  string
 }
 
-func doctorCheckHookSettings(settingsPath string) hookCheckResult {
+func doctorCheckHookSettings(settingsPath string, need []string) hookCheckResult {
 	b, err := os.ReadFile(settingsPath)
 	if err != nil {
 		return hookCheckResult{missing: true, detail: err.Error()}
@@ -229,7 +251,6 @@ func doctorCheckHookSettings(settingsPath string) hookCheckResult {
 		return hookCheckResult{detail: "invalid JSON: " + err.Error()}
 	}
 
-	need := []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"}
 	var sawOld bool
 	var hookCmd string
 	var missing []string

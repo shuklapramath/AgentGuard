@@ -10,7 +10,7 @@ func TestDoctorCheckHookSettings(t *testing.T) {
 	dir := t.TempDir()
 
 	t.Run("missing", func(t *testing.T) {
-		res := doctorCheckHookSettings(filepath.Join(dir, "nope.json"))
+		res := doctorCheckHookSettings(filepath.Join(dir, "nope.json"), claudeHookEvents)
 		if !res.missing || res.ok {
 			t.Fatalf("expected missing, got %+v", res)
 		}
@@ -18,7 +18,7 @@ func TestDoctorCheckHookSettings(t *testing.T) {
 
 	t.Run("old trampoline", func(t *testing.T) {
 		p := writeSettings(t, dir, "old.json", "/home/u/.local/bin/agentguard-hook")
-		res := doctorCheckHookSettings(p)
+		res := doctorCheckHookSettings(p, claudeHookEvents)
 		if !res.oldHook || res.ok {
 			t.Fatalf("expected oldHook, got %+v", res)
 		}
@@ -26,7 +26,7 @@ func TestDoctorCheckHookSettings(t *testing.T) {
 
 	t.Run("new hook", func(t *testing.T) {
 		p := writeSettings(t, dir, "new.json", "/usr/local/bin/agentguard hook")
-		res := doctorCheckHookSettings(p)
+		res := doctorCheckHookSettings(p, claudeHookEvents)
 		if !res.ok || res.command != "/usr/local/bin/agentguard hook" {
 			t.Fatalf("expected ok with installed hook, got %+v", res)
 		}
@@ -43,7 +43,7 @@ func TestDoctorCheckHookSettings(t *testing.T) {
 		}`), 0644); err != nil {
 			t.Fatal(err)
 		}
-		res := doctorCheckHookSettings(p)
+		res := doctorCheckHookSettings(p, claudeHookEvents)
 		if !res.oldHook || res.ok {
 			t.Fatalf("expected oldHook when any event still uses agentguard-hook, got %+v", res)
 		}
@@ -59,12 +59,32 @@ func TestDoctorCheckHookSettings(t *testing.T) {
 		}`), 0644); err != nil {
 			t.Fatal(err)
 		}
-		res := doctorCheckHookSettings(p)
+		res := doctorCheckHookSettings(p, claudeHookEvents)
 		if res.ok || res.oldHook || res.missing {
 			t.Fatalf("expected detail fail for missing event, got %+v", res)
 		}
 		if res.detail != "missing agentguard hook on PostToolUse" {
 			t.Fatalf("detail=%q", res.detail)
+		}
+	})
+
+	t.Run("codex without PostToolUseFailure", func(t *testing.T) {
+		p := filepath.Join(dir, "codex.json")
+		if err := os.WriteFile(p, []byte(`{
+			"hooks": {
+				"PreToolUse": [{"matcher":"*","hooks":[{"type":"command","command":"/usr/local/bin/agentguard hook"}]}],
+				"PostToolUse": [{"matcher":"*","hooks":[{"type":"command","command":"/usr/local/bin/agentguard hook"}]}]
+			}
+		}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		res := doctorCheckHookSettings(p, codexHookEvents)
+		if !res.ok {
+			t.Fatalf("Codex file without PostToolUseFailure should be ok, got %+v", res)
+		}
+		res = doctorCheckHookSettings(p, claudeHookEvents)
+		if res.ok || res.missing || res.oldHook {
+			t.Fatalf("same file must fail Claude check (missing Failure), got %+v", res)
 		}
 	})
 }

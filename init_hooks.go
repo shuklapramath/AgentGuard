@@ -87,6 +87,67 @@ func mergeClaudeHooks(settingsPath, hookCmd string) error {
 	return nil
 }
 
+func mergeCodexHooks(settingsPath, hookCmd string) error {
+	dir := filepath.Dir(settingsPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	chownToSudoUser(dir)
+
+	raw := map[string]json.RawMessage{}
+	if b, err := os.ReadFile(settingsPath); err == nil && len(b) > 0 {
+		if err := json.Unmarshal(b, &raw); err != nil {
+			return fmt.Errorf("parse %s: %w", settingsPath, err)
+		}
+	}
+
+	var hooks map[string][]hookMatcher
+	if h, ok := raw["hooks"]; ok {
+		if err := json.Unmarshal(h, &hooks); err != nil {
+			return fmt.Errorf("parse hooks in %s: %w", settingsPath, err)
+		}
+	}
+	if hooks == nil {
+		hooks = map[string][]hookMatcher{}
+	}
+
+	entry := hookEntry{Type: "command", Command: hookCmd}
+	for _, ev := range []string{"PreToolUse", "PostToolUse"} {
+		hooks[ev] = upsertAgentGuardHook(hooks[ev], entry)
+	}
+
+	hb, err := json.Marshal(hooks)
+	if err != nil {
+		return err
+	}
+	raw["hooks"] = hb
+	if _, ok := raw["description"]; !ok {
+		raw["description"] = json.RawMessage(`"AgentGuard LSM deny feedback"`)
+	}
+
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	if err := os.WriteFile(settingsPath, out, 0644); err != nil {
+		return err
+	}
+	chownToSudoUser(settingsPath)
+	return nil
+}
+
+func warnIfCodexInlineHooks(home string) {
+	p := filepath.Join(home, ".codex", "config.toml")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return
+	}
+	if strings.Contains(string(b), "[[hooks") {
+		fmt.Printf("warning: %s has [[hooks; Codex also loads hooks.json — prefer one representation per layer\n", p)
+	}
+}
+
 type hookMatcher struct {
 	Matcher string      `json:"matcher"`
 	Hooks   []hookEntry `json:"hooks"`

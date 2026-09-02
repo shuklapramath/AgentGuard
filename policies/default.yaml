@@ -26,6 +26,12 @@ policies:
 
         - "github.com"
         - "*.githubusercontent.com"
+
+        # --- Required for Codex ↔ OpenAI ---
+        - "*.openai.com"
+        - "*.chatgpt.com"
+        - "chatgpt.com"
+        - "openai.com"
       allowed_ports:
         - "443"  
     egress: "proxy_only"
@@ -71,12 +77,13 @@ policies:
       - "/etc/group"
       - "/etc/localtime"
       - "/etc/ld.so.cache"
-      # /proc is a known hole (/proc/<pid>/root, environ). d_path turns
-      # /proc/self into /proc/<pid>, so a narrower prefix cannot work.
+      # /proc is a known hole (/proc/<pid>/root, environ). d_path turns # /proc/self into /proc/<pid>, so a narrower prefix cannot work.
       - "/proc"
     allow_home_suffixes:
       - ".claude"
       - ".claude.json"
       - ".local"
       - ".config/anthropic"
+      - ".codex"
+      - ".config/codex"
     # feedback not required for this policy. It overwhelms the violation file.

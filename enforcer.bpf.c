@@ -78,9 +78,9 @@ struct {
 	__type(value, struct path_pattern_entry);
 } blocked_path_patterns SEC(".maps");
 
-/* Prefix allow-list for workspace confinement. 24 slots so the starter
- * YAML (system prefixes + ~/.claude + ~/.local) fits; 16 was too small. */
-#define MAX_ALLOW_PREFIXES 24
+/* Prefix allow-list for workspace confinement. 25 slots: starter YAML
+ * system prefixes plus home suffixes (.claude, .codex, .local, …). */
+#define MAX_ALLOW_PREFIXES 25
 
 struct prefix_entry {
 	char pattern[MAX_PATTERN_LEN];

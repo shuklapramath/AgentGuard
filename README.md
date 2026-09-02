@@ -78,7 +78,8 @@ macOS
 agentguard login           # Paste key on stdin; writes ~/.agentguard/anthropic_key (not argv)
 cd /path/to/your-project   # Do not run in $HOME
 agentguard init            # Once per project: creates policies/default.yaml
-#agentguard init --claude  # Optional: For Semantic Feedback if using Claude. Merges hooks into ~/.claude/settings.json
+#agentguard init --claude  # Optional: Claude deny text. Merges hooks into ~/.claude/settings.json
+#agentguard init --codex   # Optional: Codex deny text. Merges hooks into ~/.codex/hooks.json
 agentguard up              # Runs without sudo; pulls :latest on first launch
 ```
 
@@ -122,6 +123,7 @@ sudo agentguard -- claude
 | :--- | :--- |
 | `$PWD/policies/default.yaml` | **Always.** Existing file is not overwritten. |
 | `~/.claude/settings.json` | **Only with `--claude`.** Per user. Never `$PWD/.claude/`. |
+| `~/.codex/hooks.json` | **Only with `--codex`.** Per user. Never `$PWD/.codex/`. |
 
 > **Important:** `agentguard up` requires `./policies/default.yaml` in your current working directory (it does not traverse parent directories). Always `cd` to your project root before running.
 
@@ -132,15 +134,15 @@ sudo agentguard -- claude
 
 *(See `policies/default.yaml.example` for reference.)*
 
-### Claude feedback
+### Claude / Codex feedback
 
-A deny is a kernel `EPERM`. AgentGuard also tries to tell **Claude Code** what happened, using the per-policy `feedback:` string in `policies/default.yaml` (for example `SYSTEM FEEDBACK: You cannot read credential files…`).
+A deny is a kernel `EPERM`. AgentGuard also tries to tell **Claude Code** or **Codex** what happened, using the per-policy `feedback:` string in `policies/default.yaml` (for example `SYSTEM FEEDBACK: You cannot read credential files…`).
 
-`agentguard init --claude` installs Claude hooks (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`) that run `agentguard hook`. After a blocked tool, Claude should get that text as extra context (not only a failed bash). Edit `feedback:` to change what it sees. Bare `init` writes policy only; the kernel still blocks without hooks.
+`agentguard init --claude` installs Claude hooks (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`) into `~/.claude/settings.json`. `agentguard init --codex` installs Codex hooks (`PreToolUse`, `PostToolUse` only — Codex has no Failure event) into `~/.codex/hooks.json`. Both run `agentguard hook`. After a blocked tool, the agent should get that text as extra context (not only a failed bash). Edit `feedback:` to change what it sees. Bare `init` writes policy only; the kernel still blocks without hooks.
 
 This needs:
-- `sudo agentguard -- claude` (so the process is tracked)
-- hooks from `init --claude` (restart Claude if it was already running)
+- `sudo agentguard -- claude` or `sudo agentguard -- codex` (so the process is tracked)
+- hooks from `init --claude` and/or `init --codex` (restart the agent if it was already running; Codex: `/hooks` and trust the command)
 - a writable `/tmp/agentguard` (created at runtime; hooks write `active_session` / violation files)
 
 If the syscall is blocked but chat says nothing, check `/tmp/agentguard/agentguard.log` and that `agentguard doctor` reports hooks OK. Darwin `claude` is not hooked into this path; use `up`.
@@ -153,6 +155,7 @@ If the syscall is blocked but chat says nothing, check `/tmp/agentguard/agentgua
 | `sudo agentguard <pid>` | Attach BPF enforcement to an existing PID. |
 | `agentguard init` | Write `policies/default.yaml` in `$PWD`. |
 | `agentguard init --claude` | Also merge Claude hooks into `~/.claude/settings.json` (not `$PWD/.claude/`). |
+| `agentguard init --codex` | Also merge Codex hooks into `~/.codex/hooks.json` (not `$PWD/.codex/`). |
 | `agentguard doctor` | Check environment compatibility (Kernel/BTF, policy, Docker, hooks). |
 | `agentguard login` | Save `~/.agentguard/anthropic_key` securely from `stdin`. |
 | `agentguard up` | Launch privileged container, mount `$PWD` → `/workspace`, and persist runtime. |
@@ -204,7 +207,7 @@ There are two separate artifacts to keep in mind: `install.sh` does not automati
 * **Authentication:** `claude login` (OAuth) inside Docker does not work. Use `agentguard login` with an API key instead.
 * **BPF LSM:** `install.sh` does not add `lsm=bpf`. If `doctor` inside `up` reports bpf missing from the LSM list, that is guest cmdline / kernel config, not a missing mount. Securityfs is mounted automatically when the `lsm` file is unreadable.
 * **Privileges:** `agentguard up` runs with `--privileged` flags and BPF capabilities (required by design).
-* **Chat feedback:** In-chat deny text is the YAML `feedback:` field, delivered by Claude hooks (`init --claude`). The kernel still blocks if hooks are missing; Claude just will not be told why.
+* **Chat feedback:** In-chat deny text is the YAML `feedback:` field, delivered by Claude hooks (`init --claude`) or Codex hooks (`init --codex`). The kernel still blocks if hooks are missing; the agent just will not be told why.
 * **Scope:** Designed specifically as an eBPF LSM supervisor—not a Mac-native enforcer or hosted sandbox.
 
 > **Logs:** Output is written to `/tmp/agentguard/agentguard.log` (or `$AGENTGUARD_STATE_DIR`). To monitor in real-time, run `tail -f /tmp/agentguard/agentguard.log` in another terminal, as the active TTY is handed off to the agent.

@@ -127,20 +127,22 @@ func dispatchCLI(args []string) bool {
 	}
 }
 
-func parseInitFlags(rest []string) (claude bool, err error) {
+func parseInitFlags(rest []string) (claude, codex bool, err error) {
 	for _, a := range rest {
 		switch a {
 		case "--claude":
 			claude = true
+		case "--codex":
+			codex = true
 		default:
-			return false, fmt.Errorf("unexpected argument %q (want: init [--claude])", a)
+			return false, false, fmt.Errorf("unexpected argument %q (want: init [--claude] [--codex])", a)
 		}
 	}
-	return claude, nil
+	return claude, codex, nil
 }
 
 func cmdInit(rest []string) error {
-	claude, err := parseInitFlags(rest)
+	claude, codex, err := parseInitFlags(rest)
 	if err != nil {
 		return err
 	}
@@ -154,8 +156,8 @@ func cmdInit(rest []string) error {
 	}
 	fmt.Printf("Wrote %s\n", policyPath)
 
-	if !claude {
-		fmt.Println("Claude hooks not installed (optional: agentguard init --claude)")
+	if !claude && !codex {
+		fmt.Println("Claude/Codex hooks not installed (optional: agentguard init --claude and/or --codex)")
 		fmt.Println("Then: sudo agentguard -- <agent>")
 		return nil
 	}
@@ -168,14 +170,27 @@ func cmdInit(rest []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve home for hooks: %w", err)
 	}
-	userSettings := filepath.Join(home, ".claude", "settings.json")
-	if err := mergeClaudeHooks(userSettings, hookCmd); err != nil {
-		return err
+
+	if claude {
+		userSettings := filepath.Join(home, ".claude", "settings.json")
+		if err := mergeClaudeHooks(userSettings, hookCmd); err != nil {
+			return err
+		}
+		fmt.Printf("Wrote %s\n", userSettings)
+		fmt.Println("Did not write $PWD/.claude/settings.json")
+		fmt.Println("Restart Claude if it is running, then: sudo agentguard -- claude")
 	}
-	fmt.Printf("Wrote %s\n", userSettings)
+	if codex {
+		warnIfCodexInlineHooks(home)
+		codexHooks := filepath.Join(home, ".codex", "hooks.json")
+		if err := mergeCodexHooks(codexHooks, hookCmd); err != nil {
+			return err
+		}
+		fmt.Printf("Wrote %s\n", codexHooks)
+		fmt.Println("Did not write $PWD/.codex/")
+		fmt.Println("Restart Codex, run /hooks and trust the command, then: sudo agentguard -- codex")
+	}
 	fmt.Printf("Hook command: %s\n", hookCmd)
-	fmt.Println("Did not write $PWD/.claude/settings.json")
-	fmt.Println("Restart Claude if it is running, then: sudo agentguard -- claude")
 	return nil
 }
 
@@ -190,8 +205,9 @@ Usage:
 
   agentguard init                               Write policies/default.yaml in $PWD
   agentguard init --claude                      Also merge Claude hooks into YOUR ~/.claude
+  agentguard init --codex                       Also merge Codex hooks into YOUR ~/.codex
   agentguard doctor                             Check kernel, policy, launch home, hooks
-  agentguard hook                               Claude Code hook (do not run by hand)
+  agentguard hook                               Claude/Codex hook (do not run by hand)
   agentguard login                              Write ~/.agentguard/anthropic_key (stdin, not argv)
   agentguard up                                 Docker shell (privileged + BTF); runtime persisted under ~/.agentguard/runtime; then: sudo agentguard -- claude
   agentguard version
@@ -216,6 +232,7 @@ Examples:
   agentguard login
   agentguard init
   agentguard init --claude
+  agentguard init --codex
   agentguard up
   sudo agentguard -- claude
   sudo agentguard -- /usr/bin/claude
