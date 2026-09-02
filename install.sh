@@ -159,6 +159,7 @@ install_linux() {
 Next:
   cd <project>
   agentguard init
+  agentguard init --claude   # optional, Claude Code deny text in chat
   sudo agentguard -- claude
 EOF
 }
@@ -174,6 +175,7 @@ Next:
   agentguard login
   cd <project>
   agentguard init
+  agentguard init --claude   # optional, Claude Code deny text in chat
   agentguard up
   # inside, first machine only (installs into ~/.agentguard/runtime):
   curl -fsSL https://claude.ai/install.sh | bash

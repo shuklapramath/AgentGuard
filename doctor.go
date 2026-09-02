@@ -163,8 +163,8 @@ func cmdDoctor(rest []string) error {
 			fmt.Printf("[OK]   hooks: %s\n", res.command)
 			fmt.Printf("       file: %s\n", settingsPath)
 		case res.missing:
-			fmt.Printf("[FAIL] Claude settings not found: %s (run: agentguard init)\n", settingsPath)
-			ok = false
+			fmt.Printf("[INFO] Claude settings not found: %s\n", settingsPath)
+			fmt.Printf("       optional: agentguard init --claude  (kernel still enforces without hooks)\n")
 		case res.oldHook:
 			fmt.Printf("[FAIL] hooks still call agentguard-hook: %s\n", settingsPath)
 			ok = false

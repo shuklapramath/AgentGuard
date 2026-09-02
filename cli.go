@@ -127,9 +127,22 @@ func dispatchCLI(args []string) bool {
 	}
 }
 
+func parseInitFlags(rest []string) (claude bool, err error) {
+	for _, a := range rest {
+		switch a {
+		case "--claude":
+			claude = true
+		default:
+			return false, fmt.Errorf("unexpected argument %q (want: init [--claude])", a)
+		}
+	}
+	return claude, nil
+}
+
 func cmdInit(rest []string) error {
-	if len(rest) > 0 {
-		return fmt.Errorf("unexpected arguments: %v", rest)
+	claude, err := parseInitFlags(rest)
+	if err != nil {
+		return err
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -141,11 +154,16 @@ func cmdInit(rest []string) error {
 	}
 	fmt.Printf("Wrote %s\n", policyPath)
 
+	if !claude {
+		fmt.Println("Claude hooks not installed (optional: agentguard init --claude)")
+		fmt.Println("Then: sudo agentguard -- <agent>")
+		return nil
+	}
+
 	hookCmd, err := hookCommand()
 	if err != nil {
 		return fmt.Errorf("resolve hook command: %w", err)
 	}
-
 	home, err := initTargetHome()
 	if err != nil {
 		return fmt.Errorf("resolve home for hooks: %w", err)
@@ -155,14 +173,8 @@ func cmdInit(rest []string) error {
 		return err
 	}
 	fmt.Printf("Wrote %s\n", userSettings)
-
-	projSettings := filepath.Join(cwd, ".claude", "settings.json")
-	if err := mergeClaudeHooks(projSettings, hookCmd); err != nil {
-		return err
-	}
-	fmt.Printf("Wrote %s\n", projSettings)
-
 	fmt.Printf("Hook command: %s\n", hookCmd)
+	fmt.Println("Did not write $PWD/.claude/settings.json")
 	fmt.Println("Restart Claude if it is running, then: sudo agentguard -- claude")
 	return nil
 }
@@ -176,7 +188,8 @@ Usage:
   sudo agentguard [flags] run -- <agent> [...]  Same as launch
   sudo agentguard [flags] run <pid>             Same as attach
 
-  agentguard init                               Policy YAML + Claude hooks in YOUR ~/.claude
+  agentguard init                               Write policies/default.yaml in $PWD
+  agentguard init --claude                      Also merge Claude hooks into YOUR ~/.claude
   agentguard doctor                             Check kernel, policy, launch home, hooks
   agentguard hook                               Claude Code hook (do not run by hand)
   agentguard login                              Write ~/.agentguard/anthropic_key (stdin, not argv)
@@ -202,6 +215,7 @@ Env:
 Examples:
   agentguard login
   agentguard init
+  agentguard init --claude
   agentguard up
   sudo agentguard -- claude
   sudo agentguard -- /usr/bin/claude
