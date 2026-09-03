@@ -1,6 +1,3 @@
-# Starter policy created by AgentGuard.
-# Edit this file to add or remove rules for your project.
-
 policies:
   credential_protection:
     description: "Prevents the agent from reading sensitive files, API keys, and private SSH keys."
@@ -19,17 +16,24 @@ policies:
       syscall: "connect"
       allowed_hosts:
         # --- Required for Claude Code ↔ Anthropic ---
-        - "api.anthropic.com"
-        - "claude.ai"
-        - "claude.com"
-        - "platform.claude.com"
-        - "mcp-proxy.anthropic.com"
-        - "downloads.claude.ai"
-        - "storage.googleapis.com"
+        - "api.anthropic.com"          # API, feature flags, telemetry, WebFetch safety check
+        - "claude.ai"                  # claude.ai account auth
+        - "claude.com"                 # sign-in redirect / docs WebFetch
+        - "platform.claude.com"        # OAuth / Console auth (this is what blocked you)
+        - "mcp-proxy.anthropic.com"    # claude.ai MCP connectors
+        - "downloads.claude.ai"        # updates / plugin binaries
+        - "storage.googleapis.com"     # plugin metadata / artifacts (optional but commonly hit)
+
         - "github.com"
         - "*.githubusercontent.com"
+
+        # --- Required for Codex ↔ OpenAI ---
+        - "*.openai.com"
+        - "*.chatgpt.com"
+        - "chatgpt.com"
+        - "openai.com"
       allowed_ports:
-        - "443"
+        - "443"  
     egress: "proxy_only"
     allow_local_dns: true
     proxy:
@@ -44,10 +48,11 @@ policies:
       syscall: "execve"
       command_patterns:
         - "rm"
+        - "rmdir"
         - "dd"
         - "/usr/bin/rm"
         - "/bin/rm"
-        - "/usr/bin/dd"
+        - "/usr/bin/dd" 
     feedback: "SYSTEM FEEDBACK: Destructive command blocked. You do not have permission to format drives or wipe root directories."
 
   workspace_confinement:
@@ -72,11 +77,13 @@ policies:
       - "/etc/group"
       - "/etc/localtime"
       - "/etc/ld.so.cache"
-      # /proc is a known hole (/proc/<pid>/root, environ). d_path turns
-      # /proc/self into /proc/<pid>, so a narrower prefix cannot work.
+      # /proc is a known hole (/proc/<pid>/root, environ). d_path turns # /proc/self into /proc/<pid>, so a narrower prefix cannot work.
       - "/proc"
     allow_home_suffixes:
       - ".claude"
       - ".claude.json"
       - ".local"
-    feedback: "SYSTEM FEEDBACK: You cannot access files outside this project."
+      - ".config/anthropic"
+      - ".codex"
+      - ".config/codex"
+    # feedback not required for this policy. It overwhelms the violation file.

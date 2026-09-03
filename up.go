@@ -44,7 +44,7 @@ func cmdUp(rest []string) error {
 		return fmt.Errorf("%s is a directory; run: agentguard init", policy)
 	}
 
-	localDir, claudeDir, err := ensureUpRuntimeDirs()
+	localDir, claudeDir, codexDir, err := ensureUpRuntimeDirs()
 	if err != nil {
 		return err
 	}
@@ -66,6 +66,7 @@ func cmdUp(rest []string) error {
 		"-v", "/sys/kernel/debug:/sys/kernel/debug",
 		"-v", localDir + ":/home/ubuntu/.local",
 		"-v", claudeDir + ":/home/ubuntu/.claude",
+		"-v", codexDir + ":/home/ubuntu/.codex",
 		"-w", "/workspace",
 		"-e", "AGENTGUARD_POLICY=/workspace/policies/default.yaml",
 	}

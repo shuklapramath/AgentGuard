@@ -179,9 +179,10 @@ Next:
   agentguard init --claude   # optional, Claude Code deny text in chat
   agentguard init --codex    # optional, Codex deny text in chat
   agentguard up
-  # inside, first machine only (installs into ~/.agentguard/runtime):
+  # inside, first machine only (persists under ~/.agentguard/runtime):
   curl -fsSL https://claude.ai/install.sh | bash
-  sudo agentguard -- claude
+  curl -fsSL https://chatgpt.com/codex/install.sh | sh
+  sudo agentguard -- claude    # or: sudo agentguard -- codex
 EOF
 }
 

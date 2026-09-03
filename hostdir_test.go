@@ -89,6 +89,25 @@ func TestReadAnthropicAPIKeyMissingFile(t *testing.T) {
 	}
 }
 
+func TestEnsureUpRuntimeDirsCreatesCodex(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	localDir, claudeDir, codexDir, err := ensureUpRuntimeDirs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{localDir, claudeDir, codexDir} {
+		st, err := os.Stat(d)
+		if err != nil || !st.IsDir() {
+			t.Fatalf("%s: %v", d, err)
+		}
+	}
+	if !strings.HasSuffix(codexDir, filepath.Join(".agentguard", "runtime", ".codex")) {
+		t.Fatalf("codexDir = %s", codexDir)
+	}
+}
+
 func TestCmdLoginRejectsArgs(t *testing.T) {
 	err := cmdLogin([]string{"sk-ant-x"})
 	if err == nil || !strings.Contains(err.Error(), "unexpected arguments") {

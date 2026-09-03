@@ -85,10 +85,11 @@ agentguard up              # Runs without sudo; pulls :latest on first launch
 
 You are ubuntu in /workspace (your project, bind-mounted).
 
-Install Claude inside the runtime (once per machine):
+Install Claude and/or Codex inside the runtime (once per machine; binaries and `~/.codex` persist under `~/.agentguard/runtime`):
 ```
 curl -fsSL https://claude.ai/install.sh | bash
-sudo agentguard -- claude
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+sudo agentguard -- claude    # or: sudo agentguard -- codex
 ```
 
 Later sessions (macOS)
@@ -184,8 +185,9 @@ If the syscall is blocked but chat says nothing, check `/tmp/agentguard/agentgua
 | Path | Purpose / Description |
 | :--- | :--- |
 | `~/.agentguard/anthropic_key` | Mode `0600`; API key generated via `agentguard login`. |
-| `~/.agentguard/runtime/.local` | Mounted at `/home/ubuntu/.local` *(stores Claude binary)*. |
+| `~/.agentguard/runtime/.local` | Mounted at `/home/ubuntu/.local` *(Claude/Codex launchers)*. |
 | `~/.agentguard/runtime/.claude` | Mounted at `/home/ubuntu/.claude` *(persists settings/state)*. |
+| `~/.agentguard/runtime/.codex` | Mounted at `/home/ubuntu/.codex` *(Codex package, auth, `hooks.json`)*. |
 
 > Running container cleanup (`--rm`) deletes container instances, **not** your `~/.agentguard` runtime directory or local project files.
 
@@ -203,7 +205,7 @@ There are two separate artifacts to keep in mind: `install.sh` does not automati
 
 ### Limitations (v0.1.2)
 
-* **Pre-installed Binaries:** Claude is not included in the default Docker image; install it inside `agentguard up` once per machine.
+* **Pre-installed Binaries:** Claude and Codex are not in the image. Install them inside `agentguard up` once per machine; they persist under `~/.agentguard/runtime` (`.local`, `.claude`, `.codex`).
 * **Authentication:** `claude login` (OAuth) inside Docker does not work. Use `agentguard login` with an API key instead.
 * **BPF LSM:** `install.sh` does not add `lsm=bpf`. If `doctor` inside `up` reports bpf missing from the LSM list, that is guest cmdline / kernel config, not a missing mount. Securityfs is mounted automatically when the `lsm` file is unreadable.
 * **Privileges:** `agentguard up` runs with `--privileged` flags and BPF capabilities (required by design).

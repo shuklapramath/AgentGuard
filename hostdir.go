@@ -15,20 +15,20 @@ func agentGuardHostDir() (string, error) {
 	return filepath.Join(home, ".agentguard"), nil
 }
 
-func ensureUpRuntimeDirs() (localDir, claudeDir string, err error) {
+func ensureUpRuntimeDirs() (localDir, claudeDir, codexDir string, err error) {
 	root, err := agentGuardHostDir()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	localDir = filepath.Join(root, "runtime", ".local")
 	claudeDir = filepath.Join(root, "runtime", ".claude")
-	if err := os.MkdirAll(localDir, 0755); err != nil {
-		return "", "", fmt.Errorf("create %s: %w", localDir, err)
+	codexDir = filepath.Join(root, "runtime", ".codex")
+	for _, d := range []string{localDir, claudeDir, codexDir} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			return "", "", "", fmt.Errorf("create %s: %w", d, err)
+		}
 	}
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		return "", "", fmt.Errorf("create %s: %w", claudeDir, err)
-	}
-	return localDir, claudeDir, nil
+	return localDir, claudeDir, codexDir, nil
 }
 
 func anthropicKeyPath() (string, error) {
