@@ -6,6 +6,8 @@ License: [Apache-2.0](LICENSE)
 ```
 curl -fsSL https://raw.githubusercontent.com/agentguard-hq/AgentGuard/master/install.sh | bash
 agentguard login
+# Paste an API key from console.anthropic.com (stdin). OAuth inside the container does not work.
+# Writes ~/.agentguard/anthropic_key (not argv).
 cd /path/to/your-project
 agentguard init
 agentguard up
@@ -13,6 +15,7 @@ agentguard up
 `Inside the container:`
 ```
 curl -fsSL https://claude.ai/install.sh | bash
+agentguard init --claude
 sudo agentguard -- claude
 ```
 
@@ -24,6 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/agentguard-hq/AgentGuard/master/ins
 curl -fsSL https://claude.ai/install.sh | bash   
 cd /path/to/your-project
 agentguard init
+agentguard init --claude
 sudo agentguard -- claude
 ```
 
